@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import AttachPanel from "./components/AttachPanel";
 import CodeBox from "./components/CodeBox";
 import GrabPanel from "./components/GrabPanel";
+import GithubBadge from "./components/GithubBadge";
 import ItemsList from "./components/ItemsList";
 import Portal from "./components/Portal";
 import RecentCodes from "./components/RecentCodes";
@@ -300,8 +301,9 @@ export default function App() {
         )}
       </main>
 
-      <footer className="border-t border-edge/50 py-6 text-center text-xs text-mute/80">
-        AnyDevice · drop it here, receive it anywhere
+      <footer className="flex flex-col items-center gap-4 border-t border-edge/50 py-6">
+        <p className="text-xs text-mute/80">AnyDevice · drop it here, receive it anywhere</p>
+        <GithubBadge />
       </footer>
 
       {toast && <Toast toast={toast} />}

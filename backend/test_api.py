@@ -65,7 +65,12 @@ def _upload_file(client, filename="hello.txt", content=b"device A file contents"
 
 
 def test_health(client):
-    assert client.get("/api/health").status_code == 200
+    r = client.get("/api/health")
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["ok"] is True
+    assert body["service"] == "anydevice-share"
+    assert body["backend"] == "disk"
 
 
 def test_create_text_share_returns_code(client):

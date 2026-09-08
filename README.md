@@ -132,6 +132,7 @@ hits the 7-day idle auto-pause.
 
 | | |
 | --- | --- |
+| `GET /api/health` | machine health: `{ok, service, backend}` — `503` when the metadata store is unreachable |
 | `POST /api/share` | create a code + attach initial item(s) → `201 {code, items…}` |
 | `POST /api/share/<code>` | append item(s) to a live code → `200` |
 | `GET /api/share/<code>` | fetch share metadata + item list |

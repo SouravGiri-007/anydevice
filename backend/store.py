@@ -89,6 +89,11 @@ class SQLiteStore:
         if "key" not in cols:
             self._conn.execute("ALTER TABLE shares ADD COLUMN key TEXT")
 
+    def heartbeat(self) -> None:
+        """Prove the DB is reachable (used by /api/health)."""
+        with self._lock:
+            self._conn.execute("SELECT 1")
+
     # -- writes -----------------------------------------------------------
 
     def create_share(

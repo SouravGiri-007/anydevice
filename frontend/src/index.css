@@ -309,6 +309,60 @@ input.code-input {
   font-family: var(--font-sans);
 }
 
+/* ---------------------------------------------------------------- */
+/* GitHub badge — subtle 3D card that tilts toward the cursor.       */
+/* ---------------------------------------------------------------- */
+.github-badge {
+  display: inline-flex;
+  transform-style: preserve-3d;
+  will-change: transform;
+  border: 1px solid rgba(159, 122, 234, 0.28);
+  border-radius: 999px;
+  padding: 8px 16px;
+  background: linear-gradient(180deg, rgba(23, 23, 36, 0.85), rgba(17, 17, 25, 0.9));
+  color: #e5e3f0;
+  text-decoration: none;
+  transition: transform 0.12s ease-out, border-color 0.25s ease, box-shadow 0.25s ease;
+}
+
+.github-badge:hover {
+  border-color: rgba(159, 122, 234, 0.75);
+  color: #fff;
+  box-shadow:
+    0 0 28px -6px rgba(159, 122, 234, 0.55),
+    0 22px 44px -18px rgba(0, 0, 0, 0.85);
+}
+
+.github-badge-inner {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  transform: translateZ(16px);
+  transform-style: preserve-3d;
+}
+
+.github-badge-icon {
+  display: inline-flex;
+  color: #bda6f4;
+  transform: translateZ(30px);
+  transition: color 0.25s ease;
+}
+
+.github-badge:hover .github-badge-icon {
+  color: #d4c9f7;
+}
+
+.github-badge-icon svg {
+  width: 17px;
+  height: 17px;
+}
+
+.github-badge-text {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
 .thin-scroll::-webkit-scrollbar { height: 8px; width: 8px; }
 .thin-scroll::-webkit-scrollbar-thumb { background: #232330; border-radius: 8px; }
 
@@ -318,8 +372,10 @@ input.code-input {
 
 @media (prefers-reduced-motion: reduce) {
   .portal-vortex, .portal-vortex.a, .portal-vortex.b, .portal-ring.thin,
-  .portal::before, .portal-glow, .emerge, .drop-foreground, .fade-up {
+  .portal::before, .portal-glow, .emerge, .drop-foreground, .fade-up,
+  .github-badge {
     animation: none !important;
+    transition: none !important;
   }
 }
 

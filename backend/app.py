@@ -401,7 +401,17 @@ def create_app(cfg: Config | None = None) -> Flask:
 
     @app.route("/api/health")
     def health():
-        return jsonify({"ok": True, "service": "anydevice-share"})
+        db_ok = True
+        error = None
+        try:
+            cfg.meta_store.heartbeat()
+        except Exception as e:  # noqa: BLE001
+            db_ok = False
+            error = type(e).__name__
+        payload = {"ok": db_ok, "service": "anydevice-share", "backend": cfg.backend}
+        if error is not None:
+            payload["error"] = error
+        return jsonify(payload), (200 if db_ok else 503)
 
     @app.errorhandler(ApiError)
     def handle_api_error(e: ApiError):
