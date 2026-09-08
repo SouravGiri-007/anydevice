@@ -177,5 +177,3 @@ frontend/
   src/components/             portal, attach, grab, code/QR, item previews
   src/lib/                    api client, formatting, tickers, recent-codes store
 ```
-
-Built from the PRD in `anydevice-share-PRD (1).md`.
