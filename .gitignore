@@ -1,0 +1,27 @@
+# Python (backend)
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Node (frontend)
+node_modules/
+frontend/dist/
+
+# Local app data + dev logs
+data/
+*.log
+.freebuff/
+
+# Secrets / env — never commit real credentials
+.env
+*.env
+firebase-creds.json
+supabase-creds.json
+credentials.json
+*.pem
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/

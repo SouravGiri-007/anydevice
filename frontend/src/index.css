@@ -1,0 +1,342 @@
+@import "tailwindcss";
+
+/* ------------------------------------------------------------------ */
+/* Tokens — one violet, one near-black, mint for success only.         */
+/* ------------------------------------------------------------------ */
+@theme {
+  --color-bg: #0a0a12;
+  --color-panel: #111119;
+  --color-panel2: #171724;
+  --color-edge: #232330;
+  --color-violet: #9f7aea;
+  --color-violets: #bda6f4;
+  --color-mint: #4ade80;
+  --color-ink: #e5e3f0;
+  --color-mute: #6b6885;
+
+  --font-sans: "General Sans", ui-sans-serif, system-ui, -apple-system,
+    "Segoe UI", sans-serif;
+}
+
+html {
+  background: #0a0a12;
+}
+
+body {
+  margin: 0;
+  color: #e5e3f0;
+  font-family: var(--font-sans);
+  background:
+    radial-gradient(1100px 600px at 50% -12%, rgba(159, 122, 234, 0.12), transparent 62%),
+    #0a0a12;
+  min-height: 100dvh;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: rgba(159, 122, 234, 0.4);
+}
+
+/* ---------------------------------------------------------------- */
+/* Quiet primitives                                                  */
+/* ---------------------------------------------------------------- */
+.panel3d {
+  background: rgba(23, 23, 36, 0.55);
+  border: 1px solid rgba(229, 227, 240, 0.08);
+  border-radius: 18px;
+  backdrop-filter: blur(14px);
+}
+
+.chip {
+  border: 1px solid rgba(229, 227, 240, 0.14);
+  color: #8f8ca8;
+  border-radius: 999px;
+  padding: 5px 13px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  background: transparent;
+}
+
+.chip:hover {
+  border-color: rgba(159, 122, 234, 0.7);
+  color: #e5e3f0;
+}
+
+.chip.on {
+  background: #9f7aea;
+  border-color: #9f7aea;
+  color: #0a0a12;
+  box-shadow: 0 0 18px -4px rgba(159, 122, 234, 0.8);
+}
+
+.chip.danger:hover {
+  border-color: rgba(229, 227, 240, 0.4);
+  color: #e5e3f0;
+}
+
+.switch {
+  width: 36px;
+  height: 21px;
+  border-radius: 999px;
+  border: 1px solid rgba(229, 227, 240, 0.16);
+  background: #171724;
+  position: relative;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  flex: none;
+}
+
+.switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: #6b6885;
+  transition: all 0.18s ease;
+}
+
+.switch.on {
+  border-color: rgba(74, 222, 128, 0.6);
+  background: rgba(74, 222, 128, 0.1);
+}
+
+.switch.on::after {
+  left: 17px;
+  background: #4ade80;
+  box-shadow: 0 0 10px rgba(74, 222, 128, 0.7);
+}
+
+/* ---------------------------------------------------------------- */
+/* The portal — the mechanism, not decoration.                       */
+/* Two conic-gradient discs rotating opposite directions, feathered  */
+/* with a radial mask. GPU-cheap (transform-only animation).          */
+/* ---------------------------------------------------------------- */
+.portal-stage {
+  position: relative;
+  height: clamp(300px, 52vh, 470px);
+  width: 100%;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.portal {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: min(460px, 92vw);
+  aspect-ratio: 1;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+/* ambient glow the only bright thing in the scene */
+.portal::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(159, 122, 234, 0.34), rgba(159, 122, 234, 0.05) 62%, transparent 74%);
+  animation: portalBreath 7s ease-in-out infinite;
+}
+
+.portal-vortex {
+  position: absolute;
+  inset: 12%;
+  border-radius: 50%;
+  -webkit-mask-image: radial-gradient(closest-side, black 30%, transparent 72%);
+  mask-image: radial-gradient(closest-side, black 30%, transparent 72%);
+  opacity: 0.9;
+}
+
+.portal-vortex.a {
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg 40deg,
+    rgba(159, 122, 234, 0.85) 66deg 92deg,
+    transparent 120deg 200deg,
+    rgba(189, 166, 244, 0.55) 230deg 254deg,
+    transparent 280deg 360deg
+  );
+  animation: spin 26s linear infinite;
+}
+
+.portal-vortex.b {
+  background: conic-gradient(
+    from 180deg,
+    transparent 0deg 70deg,
+    rgba(159, 122, 234, 0.35) 96deg 120deg,
+    transparent 150deg 260deg,
+    rgba(189, 166, 244, 0.28) 300deg 322deg,
+    transparent 340deg 360deg
+  );
+  animation: spin 40s linear infinite reverse;
+}
+
+.portal-ring {
+  position: absolute;
+  inset: 4%;
+  border-radius: 50%;
+  border: 1px solid rgba(159, 122, 234, 0.22);
+}
+
+.portal-ring.thin {
+  inset: 20%;
+  border-color: rgba(159, 122, 234, 0.1);
+  border-style: dashed;
+  animation: spin 90s linear infinite;
+}
+
+/* dragging a file over the portal — it leans in */
+.portal-stage.dragover .portal-ring {
+  border-color: rgba(159, 122, 234, 0.85);
+  box-shadow: 0 0 30px -6px rgba(159, 122, 234, 0.6), inset 0 0 24px -10px rgba(159, 122, 234, 0.5);
+}
+.portal-stage.dragover .portal::before {
+  opacity: 1;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes portalBreath {
+  0%, 100% { opacity: 0.85; }
+  50% { opacity: 1; }
+}
+
+/* absorbing: the one orchestrated non-ambient moment */
+.portal-stage.absorbing .portal-vortex.a { animation-duration: 2.4s; }
+.portal-stage.absorbing .portal-vortex.b { animation-duration: 3.6s; }
+.portal-stage.absorbing .portal::before { animation: none; }
+.portal-stage.absorbing .portal-glow {
+  animation: absorbGlow 0.7s ease-in-out;
+}
+.portal-stage.absorbing .portal-hint,
+.portal-stage.absorbing .drop-foreground {
+  animation: suckIn 0.7s cubic-bezier(0.5, 0, 0.8, 0.4) forwards;
+}
+
+.portal-glow {
+  position: absolute;
+  inset: -18%;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(159, 122, 234, 0.5), transparent 70%);
+  opacity: 0.25;
+  animation: portalBreath 5s ease-in-out infinite;
+}
+
+@keyframes absorbGlow {
+  0% { opacity: 0.25; transform: scale(1); }
+  60% { opacity: 0.95; }
+  100% { opacity: 0.45; transform: scale(1.25); }
+}
+
+@keyframes suckIn {
+  to { opacity: 0; transform: translateY(6px) scale(0.55); filter: blur(4px); }
+}
+
+/* content emerges from the portal center */
+@keyframes emerge {
+  from { opacity: 0; transform: translate(-50%, -46%) scale(0.72); filter: blur(6px); }
+  60% { opacity: 1; }
+  to { opacity: 1; transform: translate(-50%, -50%) scale(1); filter: blur(0); }
+}
+
+.emerge {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  animation: emerge 0.55s cubic-bezier(0.2, 0.8, 0.3, 1) both;
+  width: min(560px, 100%);
+  text-align: center;
+}
+
+.fade-up {
+  animation: fadeUp 0.4s ease both;
+}
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.spin {
+  animation: spin 0.9s linear infinite;
+}
+
+/* drop foreground sits centered, above the vortex */
+.drop-foreground {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 0 20px;
+}
+
+.mini-logo {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(159, 122, 234, 0.75);
+  box-shadow: 0 0 16px -2px rgba(159, 122, 234, 0.8);
+  position: relative;
+  flex: none;
+}
+
+.mini-logo::before {
+  content: "";
+  position: absolute;
+  inset: 6px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 38% 32%, #bda6f4, #9f7aea 55%, transparent 80%);
+}
+
+input.code-input {
+  letter-spacing: 0.22em;
+  font-weight: 700;
+  font-size: 1.35rem;
+  font-family: var(--font-sans);
+}
+
+.thin-scroll::-webkit-scrollbar { height: 8px; width: 8px; }
+.thin-scroll::-webkit-scrollbar-thumb { background: #232330; border-radius: 8px; }
+
+@media (max-width: 640px) {
+  .portal-stage { height: clamp(280px, 46vh, 400px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .portal-vortex, .portal-vortex.a, .portal-vortex.b, .portal-ring.thin,
+  .portal::before, .portal-glow, .emerge, .drop-foreground, .fade-up {
+    animation: none !important;
+  }
+}
+
+/* ---------------------------------------------------------------- */
+/* Syntax highlighting — violet family only; mint stays for success  */
+/* ---------------------------------------------------------------- */
+.hljs { color: #e5e3f0; background: transparent; }
+.hljs-keyword, .hljs-selector-tag, .hljs-doctag, .hljs-literal {
+  color: #a78bfa;
+}
+.hljs-title, .hljs-title.function_, .hljs-section {
+  color: #d4c9f7;
+}
+.hljs-string, .hljs-regexp, .hljs-addition { color: #c9b8f5; }
+.hljs-number, .hljs-symbol, .hljs-bullet { color: #e5e3f0; }
+.hljs-comment, .hljs-quote { color: #6b6885; font-style: italic; }
+.hljs-built_in, .hljs-type, .hljs-params { color: #cfc7ea; }
+.hljs-meta, .hljs-meta .hljs-keyword { color: #bda6f4; }
+.hljs-tag, .hljs-name, .hljs-selector-class, .hljs-selector-id { color: #a78bfa; }
+.hljs-variable, .hljs-template-variable, .hljs-attr { color: #d9d1f5; }
