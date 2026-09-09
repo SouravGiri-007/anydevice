@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 import pytest
 
 from backend.app import create_app
+from backend.cleanup import purge_once
 from backend.config import Config
 
 TEXT_ITEMS = [
@@ -405,6 +406,7 @@ def test_admin_page_serves_standalone_dashboard(client):
     assert "AnyDevice" in text
     assert "/api/admin/stats" in text
     assert "/api/admin/shares" in text
+    assert "/api/admin/history" in text
     assert 'type="password"' in text
     assert client.get("/admin").status_code == 200
 
@@ -480,6 +482,256 @@ def test_admin_shares_tracks_downloads_and_burn(tmp_path):
     assert client.get(f"/api/share/{code2}/download/{item2['id']}").status_code == 200
     body3 = client.get("/api/admin/shares", headers={"X-Admin-Key": "hk-secret"}).get_json()
     assert all(s["code"] != code2 for s in body3["shares"])
+
+
+# -- persistent share history (admin) ------------------------------------------
+
+
+def _set_creator_ip(cfg, code, ip):
+    cfg.meta_store._conn.execute(
+        "UPDATE shares SET creator_ip = ? WHERE code = ?", (ip, code)
+    )
+    cfg.meta_store._conn.commit()
+
+
+def test_history_recorded_on_expiry_and_data_deleted(tmp_path):
+    cfg = Config(data_dir=tmp_path / "data")
+    app = create_app(cfg)
+    app.config["TESTING"] = True
+    client = app.test_client()
+    code = _make_share(client).get_json()["code"]
+    _set_creator_ip(cfg, code, "203.0.113.9")
+    assert cfg.meta_store.count() == 1
+
+    _force_expiry(app, code)
+    assert purge_once(cfg.meta_store, cfg.blob_store) == 1
+
+    # Physical data is gone…
+    assert cfg.meta_store.count() == 0
+    assert cfg.meta_store.get(code) is None
+    # …but the metadata survives as history.
+    entries = cfg.meta_store.history()
+    assert len(entries) == 1
+    h = entries[0]
+    assert h["code"] == code
+    assert h["status"] == "expired"
+    assert h["burn"] is False
+    assert h["downloads"] == 0
+    assert h["bytes_total"] == len(TEXT_ITEMS[0]["content"].encode())
+    assert h["created_at"] <= h["ended_at"]
+    assert h["items"] == [
+        {"name": "hello.py", "type": "text", "size": len(TEXT_ITEMS[0]["content"].encode())}
+    ]
+    assert h["creator_ip"] == "203.0.113.9"
+
+
+def test_history_idempotent_no_duplicates(tmp_path):
+    cfg = Config(data_dir=tmp_path / "data")
+    app = create_app(cfg)
+    client = app.test_client()
+    code = _make_share(client).get_json()["code"]
+    _force_expiry(app, code)
+
+    assert purge_once(cfg.meta_store, cfg.blob_store) == 1
+    assert len(cfg.meta_store.history()) == 1
+    # Retry / double-cleanup must not duplicate.
+    assert purge_once(cfg.meta_store, cfg.blob_store) == 0
+    assert len(cfg.meta_store.history()) == 1
+
+
+def test_history_burn_records_and_purges(tmp_path):
+    cfg = Config(data_dir=tmp_path / "data")
+    app = create_app(cfg)
+    app.config["TESTING"] = True
+    client = app.test_client()
+    r = _upload_file(client, "secret.bin", b"TOP SECRET DATA", burn=True)
+    j = r.get_json()
+    code, item = j["code"], j["items"][0]
+
+    assert client.get(f"/api/share/{code}/download/{item['id']}").status_code == 200
+
+    assert cfg.meta_store.get(code) is None
+    entries = cfg.meta_store.history()
+    assert len(entries) == 1
+    h = entries[0]
+    assert h["code"] == code
+    assert h["status"] == "burned"
+    assert h["burn"] is True
+    assert h["downloads"] == 1
+    assert h["bytes_total"] == len(b"TOP SECRET DATA")
+    assert h["items"] == [
+        {"name": "secret.bin", "type": "file", "size": len(b"TOP SECRET DATA")}
+    ]
+    assert h["creator_ip"]  # create route captures the client IP
+
+
+def test_history_survives_restart(tmp_path):
+    from backend.store import SQLiteStore
+
+    db = tmp_path / "db.sqlite3"
+    s1 = SQLiteStore(db)
+    s1.create_share("HIST1", "5m", 300, False, [{"id": "i1", "type": "text", "name": "a.txt", "content": "hi"}], creator_ip="198.51.100.7")
+    s1.create_share("HIST2", "5m", 300, True, [{ "id": "i2", "type": "file", "name": "b.bin", "size": 12, "blob_key": "shares/HIST2/x.bin"}], creator_ip="198.51.100.8")
+    assert s1.finalize("HIST1", "expired", now=1000)
+    assert s1.finalize("HIST2", "burned", now=2000)
+
+    s2 = SQLiteStore(db)  # restart simulation on the same file
+    entries = s2.history()
+    assert len(entries) == 2
+    assert entries[0]["code"] == "HIST2"  # newest-ended first
+    assert entries[0]["creator_ip"] == "198.51.100.8"
+    assert entries[1]["code"] == "HIST1"
+
+
+def test_admin_history_api_auth_and_payload(tmp_path):
+    client, app = _admin_app(tmp_path, admin_key="hk-secret")
+    assert client.get("/api/admin/history").status_code == 401
+    assert client.get("/api/admin/history", headers={"X-Admin-Key": "wrong"}).status_code == 401
+
+    code = _make_share(client).get_json()["code"]
+    _force_expiry(app, code)
+    cfg = _cfg(app)
+    assert purge_once(cfg.meta_store, cfg.blob_store) == 1
+
+    body = client.get("/api/admin/history", headers={"X-Admin-Key": "hk-secret"}).get_json()
+    assert body["ok"] is True
+    assert body["backend"] == "disk"
+    assert body["count"] == 1
+    h = body["history"][0]
+    assert h["code"] == code
+    assert h["status"] == "expired"
+
+    # Contents must never leak into the history payload.
+    raw = client.get("/api/admin/history", headers={"X-Admin-Key": "hk-secret"}).get_data(as_text=True)
+    assert 'print("hello from device A")' not in raw
+
+
+def test_admin_history_never_exposes_content_after_burn(tmp_path):
+    client, app = _admin_app(tmp_path, admin_key="hk-secret")
+    r = _upload_file(client, "secret.bin", b"TOP SECRET DATA", burn=True)
+    j = r.get_json()
+    code, item = j["code"], j["items"][0]
+    assert client.get(f"/api/share/{code}/download/{item['id']}").status_code == 200
+
+    raw = client.get("/api/admin/history", headers={"X-Admin-Key": "hk-secret"}).get_data(as_text=True)
+    assert "TOP SECRET DATA" not in raw
+    assert "TOP SECRET DATA".encode() not in client.get(
+        "/api/admin/history", headers={"X-Admin-Key": "hk-secret"}
+    ).data
+
+
+# -- receiver tracking (pickup + per-download audit, admin-only) ----------------
+
+
+def test_receiver_pickup_recorded_once(tmp_path):
+    cfg = Config(data_dir=tmp_path / "data")
+    app = create_app(cfg)
+    app.config["TESTING"] = True
+    client = app.test_client()
+    code = _make_share(client).get_json()["code"]
+
+    r1 = client.get(f"/api/share/{code}?mark_viewed=1")
+    assert r1.status_code == 200
+    # Public payload must NOT expose receiver IP.
+    assert "picked_ip" not in r1.get_json()
+    assert "creator_ip" not in r1.get_json()
+
+    share = cfg.meta_store.get(code)
+    assert share["status"] == "viewed"
+    assert share["picked_at"] is not None
+    assert share["picked_ip"]  # test client remote addr
+
+    # Second pickup attempt must not overwrite the first.
+    first = (share["picked_at"], share["picked_ip"])
+    assert client.get(f"/api/share/{code}?mark_viewed=1").status_code == 200
+    share = cfg.meta_store.get(code)
+    assert (share["picked_at"], share["picked_ip"]) == first
+
+
+def test_downloads_logged_with_receiver_ip(tmp_path):
+    cfg = Config(data_dir=tmp_path / "data")
+    app = create_app(cfg)
+    app.config["TESTING"] = True
+    client = app.test_client()
+    r = _upload_file(client, "a.bin", b"AAAA")
+    code = r.get_json()["code"]
+    item = r.get_json()["items"][0]
+    assert client.get(f"/api/share/{code}/download/{item['id']}").status_code == 200
+
+    feed = _cfg(app).meta_store.admin_shares()
+    assert feed[0]["downloads"] == 1
+    assert len(feed[0]["download_log"]) == 1
+    entry = feed[0]["download_log"][0]
+    assert entry["item"] == "a.bin"
+    assert entry["ip"]  # receiver IP captured
+    assert entry["at"] is not None
+
+
+def test_history_snapshots_receiver_tracking(tmp_path):
+    cfg = Config(data_dir=tmp_path / "data")
+    app = create_app(cfg)
+    app.config["TESTING"] = True
+    client = app.test_client()
+    r = _upload_file(client, "a.bin", b"AAAA")
+    code = r.get_json()["code"]
+    item = r.get_json()["items"][0]
+
+    # Receiver picks up, then downloads the one file.
+    assert client.get(f"/api/share/{code}?mark_viewed=1").status_code == 200
+    assert client.get(f"/api/share/{code}/download/{item['id']}").status_code == 200
+
+    _force_expiry(app, code)
+    assert purge_once(cfg.meta_store, cfg.blob_store) == 1
+
+    h = cfg.meta_store.history()[0]
+    assert h["status"] == "expired"
+    assert h["picked_at"] is not None
+    assert h["picked_ip"]
+    assert h["downloads"] == 1
+    assert len(h["download_log"]) == 1
+    assert h["download_log"][0]["item"] == "a.bin"
+    assert h["download_log"][0]["ip"]
+    assert h["creator_ip"]
+
+    # Admin history API exposes receiver tracking…
+    client_admin, _ = _admin_app(tmp_path, admin_key="hk-secret")
+    body = client_admin.get("/api/admin/history", headers={"X-Admin-Key": "hk-secret"}).get_json()
+    h2 = body["history"][0]
+    assert h2["picked_ip"]
+    assert h2["download_log"][0]["ip"]
+    # …but public endpoints never do.
+    cfg_public = Config(data_dir=tmp_path / "data")
+    app2 = create_app(cfg_public)
+    app2.config["TESTING"] = True
+    pub = app2.test_client()
+    live = _upload_file(pub, "b.bin", b"BBBB").get_json()
+    share_resp = pub.get(f"/api/share/{live['code']}?mark_viewed=1")
+    assert "picked_ip" not in share_resp.get_json()
+    assert "picked_at" not in share_resp.get_json()
+    assert "creator_ip" not in share_resp.get_json()
+
+
+def test_download_all_logs_each_item(tmp_path):
+    cfg = Config(data_dir=tmp_path / "data")
+    app = create_app(cfg)
+    app.config["TESTING"] = True
+    client = app.test_client()
+    _make_share(client, items=[{"type": "text", "name": "one.txt", "content": "x"}])
+    r = _make_share(
+        client,
+        items=[
+            {"type": "text", "name": "two.txt", "content": "yy"},
+            {"type": "text", "name": "three.txt", "content": "zzz"},
+        ],
+    )
+    code = r.get_json()["code"]
+
+    assert client.get(f"/api/share/{code}/download-all").status_code == 200
+    feed = _cfg(app).meta_store.admin_shares()
+    sh = next(s for s in feed if s["code"] == code)
+    assert sh["downloads"] == 2
+    assert len(sh["download_log"]) == 2
+    assert {e["item"] for e in sh["download_log"]} == {"two.txt", "three.txt"}
 
 
 # -- server-managed at-rest encryption ----------------------------------------
