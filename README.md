@@ -112,6 +112,10 @@ hits the 7-day idle auto-pause.
 
 ## Configuration (env vars)
 
+Local dev: copy `.env.example` to `.env` and fill in your values — the backend
+loads it automatically (`python-dotenv`). Deployed hosts (Render, PythonAnywhere)
+set the same variables in their dashboard instead; no `.env` file needed there.
+
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `ANYDEVICE_BACKEND` | `disk` | `disk` (SQLite + local blobs) or `supabase` |

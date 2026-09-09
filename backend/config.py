@@ -9,6 +9,8 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 
 def _env_int(name: str, default: int) -> int:
     raw = os.environ.get(name)
@@ -91,6 +93,9 @@ class Config:
 
     @classmethod
     def from_env(cls) -> "Config":
+        # Local dev convenience: read optional project .env (a no-op when the
+        # file is absent, so deployed hosts that set real env vars are unaffected).
+        load_dotenv()
         return cls(
             data_dir=Path(os.environ.get("ANYDEVICE_DATA_DIR", "./data")).resolve(),
             file_max_bytes=_env_int("ANYDEVICE_FILE_MAX", cls.file_max_bytes),
