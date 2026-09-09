@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import AttachPanel from "./components/AttachPanel";
 import CodeBox from "./components/CodeBox";
+import SolarSystem from "./components/SolarSystem";
 import GrabPanel from "./components/GrabPanel";
 import GithubBadge from "./components/GithubBadge";
 import { StarIcon } from "./components/icons";
@@ -205,6 +206,7 @@ export default function App() {
 
   return (
     <div className="mx-auto flex min-h-dvh w-full max-w-3xl flex-col px-4 sm:px-6">
+      <SolarSystem />
       <header className="flex items-center gap-3 py-5">
         <span className="mini-logo" aria-hidden="true" />
         <span className="text-[15px] font-bold tracking-tight text-ink">AnyDevice</span>

@@ -302,6 +302,161 @@ body {
   background: radial-gradient(circle at 38% 32%, #bda6f4, #9f7aea 55%, transparent 80%);
 }
 
+/* ---------------------------------------------------------------- */
+/* Digital solar system — decorative orbital background.             */
+/* Five tilted neon orbit rings spin around the transfer UI; glass-   */
+/* world file cores ride the rims like planets. transform-only        */
+/* animation; scene is pointer-events:none, behind the UI, so it can  */
+/* never block typing, clicking, or drops.                            */
+/* ---------------------------------------------------------------- */
+.solar-scene {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.solar-sun {
+  position: absolute;
+  left: 50%;
+  top: 44%;
+  width: clamp(560px, 92vw, 1040px);
+  height: clamp(560px, 92vw, 1040px);
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    rgba(159, 122, 234, 0.16) 0%,
+    rgba(99, 84, 214, 0.07) 42%,
+    rgba(58, 52, 160, 0.03) 60%,
+    transparent 74%
+  );
+  animation: sunPulse 16s ease-in-out infinite;
+}
+
+@keyframes sunPulse {
+  0%, 100% { opacity: 0.85; transform: translate(-50%, -50%) scale(1); }
+  50% { opacity: 1; transform: translate(-50%, -50%) scale(1.035); }
+}
+
+.solar-orbit {
+  --size: 440px;
+  --tilt: 58deg;
+  --dur: 72s;
+  position: absolute;
+  left: 50%;
+  top: 44%;
+  width: var(--size);
+  height: var(--size);
+  margin: calc(var(--size) / -2) 0 0 calc(var(--size) / -2);
+  animation: orbitSpin var(--dur) linear infinite;
+}
+
+@keyframes orbitSpin {
+  from { transform: rotateX(var(--tilt)) rotateZ(0deg); }
+  to { transform: rotateX(var(--tilt)) rotateZ(360deg); }
+}
+
+.solar-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(159, 122, 234, 0.22);
+  box-shadow:
+    0 0 16px -6px rgba(159, 122, 234, 0.5),
+    inset 0 0 16px -8px rgba(129, 180, 255, 0.25);
+}
+
+.solar-core {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  transform: translate(-50%, -50%) rotateX(calc(var(--tilt) * -1));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 30% 28%,
+    rgba(255, 255, 255, 0.26) 0%,
+    rgba(88, 72, 160, 0.72) 42%,
+    rgba(13, 12, 24, 0.94) 80%
+  );
+  border: 1px solid rgba(189, 166, 244, 0.55);
+  color: #d9d2f4;
+  box-shadow:
+    0 0 24px -6px rgba(159, 122, 234, 0.8),
+    inset 0 1px 2px rgba(255, 255, 255, 0.28);
+}
+
+.solar-core.core-south { top: 100%; }
+
+.solar-core svg { width: 18px; height: 18px; }
+
+.solar-ext {
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: #bda6f4;
+  text-shadow: 0 0 8px rgba(159, 122, 234, 0.8);
+}
+
+/* orbit sizing + speeds + tilt */
+.orb-is {
+  --size: min(560px, 60vw);
+  --tilt: 64deg;
+  --dur: 96s;
+}
+.orb-doc {
+  --size: min(470px, 52vw);
+  --tilt: 56deg;
+  --dur: 72s;
+}
+.orb-image {
+  --size: min(390px, 44vw);
+  --tilt: 60deg;
+  --dur: 54s;
+}
+.orb-sheet {
+  --size: min(315px, 36vw);
+  --tilt: 48deg;
+  --dur: 120s;
+}
+.orb-text {
+  --size: min(245px, 30vw);
+  --tilt: 68deg;
+  --dur: 38s;
+}
+
+.orb-sheet, .orb-text { animation-direction: reverse; }
+
+/* tablet: drop outermost + innermost rings, dim the rest */
+@media (max-width: 1100px) {
+  .orb-is, .orb-text { display: none; }
+  .solar-orbit { opacity: 0.55; }
+  .solar-core { width: 42px; height: 42px; }
+  .solar-core svg { width: 15px; height: 15px; }
+  .solar-sun { opacity: 0.6; }
+}
+
+/* mobile: keep only the sun backdrop, hide all orbits */
+@media (max-width: 700px) {
+  .solar-scene { opacity: 0.5; }
+  .solar-orbit { display: none; }
+  .solar-sun { width: 140vw; height: 140vw; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .solar-sun, .solar-orbit { animation: none; }
+  .solar-sun { opacity: 0.5; }
+  .solar-scene { opacity: 0.45; }
+}
+
 input.code-input {
   letter-spacing: 0.22em;
   font-weight: 700;
