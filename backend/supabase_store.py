@@ -410,6 +410,7 @@ class SupabaseStore:
         day_start = int(now) - (int(now) % 86400)
         with self._conn() as conn:
             total = conn.execute("SELECT COUNT(*) AS n FROM shares").fetchone()["n"]
+            hist_total = conn.execute("SELECT COUNT(*) AS n FROM share_history").fetchone()["n"]
             recent = conn.execute(
                 "SELECT COUNT(*) AS n FROM shares WHERE created_at >= %s", (day_ago,)
             ).fetchone()["n"]
@@ -436,7 +437,7 @@ class SupabaseStore:
             key = (today - timedelta(days=i)).isoformat()
             last7.append({"date": key, "count": counts.get(key, 0)})
         return {
-            "shares_total": total,
+            "shares_total": total + hist_total,
             "shares_24h": recent,
             "shares_active": active,
             "burn_pct": round(100.0 * burn / total, 1) if total else 0.0,

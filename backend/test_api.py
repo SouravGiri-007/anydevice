@@ -893,6 +893,18 @@ def test_scrap_records_history_but_token_never_leaks(tmp_path):
     assert h.get("sender_token") is None
 
 
+def test_stats_total_includes_ended_shares(tmp_path):
+    client, app = _admin_app(tmp_path, admin_key="hk-secret")
+    code = _make_share(client).get_json()["code"]
+    assert client.get("/api/admin/stats", headers={"X-Admin-Key": "hk-secret"}).get_json()["shares_total"] == 1
+    _force_expiry(app, code)
+    cfg = _cfg(app)
+    assert purge_once(cfg.meta_store, cfg.blob_store) == 1
+    body = client.get("/api/admin/stats", headers={"X-Admin-Key": "hk-secret"}).get_json()
+    assert body["shares_total"] == 1  # 0 live + 1 history
+    assert body["shares_active"] == 0
+
+
 def test_scrap_unaffected_by_burn_semantics(client):
     # Burn mode only self-destructs after every download; scrap is immediate.
     j = _make_share(

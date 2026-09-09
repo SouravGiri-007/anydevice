@@ -427,6 +427,7 @@ class SQLiteStore:
         day_start = int(now) - (int(now) % 86400)
         with self._lock:
             total = self._conn.execute("SELECT COUNT(*) FROM shares").fetchone()[0]
+            hist_total = self._conn.execute("SELECT COUNT(*) FROM share_history").fetchone()[0]
             recent = self._conn.execute(
                 "SELECT COUNT(*) FROM shares WHERE created_at >= ?", (day_ago,)
             ).fetchone()[0]
@@ -452,7 +453,7 @@ class SQLiteStore:
             key = (today - timedelta(days=i)).isoformat()
             last7.append({"date": key, "count": counts.get(key, 0)})
         return {
-            "shares_total": total,
+            "shares_total": total + hist_total,
             "shares_24h": recent,
             "shares_active": active,
             "burn_pct": round(100.0 * burn / total, 1) if total else 0.0,
