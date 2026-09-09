@@ -277,6 +277,7 @@
       <option value="all">Status: all</option>
       <option value="expired">Expired</option>
       <option value="burned">Burned</option>
+      <option value="scraped">Scraped</option>
     </select>
     <select id="hType">
       <option value="all">Type: all</option>
@@ -512,6 +513,7 @@
       var names = (h.items || []).map(function (i) { return i.name; });
       var typeCount = (h.items || []).filter(function (i) { return i.type === "file"; }).length;
       var stCls = h.status === "burned" ? "st-burn" : "st-exp";
+      var stLabel = h.status === "burned" ? "Burned" : (h.status === "scraped" ? "Scraped" : "Expired");
       var filesCell = '<span class="files">' + esc(names[0] || "—") +
         (names.length > 1 ? '<span class="files"><small>+ ' + (names.length - 1) + ' more</small></span>' : "") +
         "</span>";
@@ -522,7 +524,7 @@
           '<span>' + fmtDate(h.picked_at) + "</span></div>";
       }
       return '<details class="drow"><summary class="hrow">' +
-        '<div class="cell ' + stCls + '" data-label="Status">' + (h.status === "burned" ? "Burned" : "Expired") + "</div>" +
+        '<div class="cell ' + stCls + '" data-label="Status">' + stLabel + "</div>" +
         '<div class="cell code-cell" data-label="Code"><span class="code">' + esc(h.code) + "</span></div>" +
         '<div class="cell" data-label="Files">' + filesCell + (typeCount ? '<small>' + typeCount + ' file(s)</small>' : "") + "</div>" +
         '<div class="cell" data-label="Size">' + fmtBytes(h.bytes_total) + "</div>" +

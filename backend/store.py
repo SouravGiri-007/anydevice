@@ -27,7 +27,8 @@ CREATE TABLE IF NOT EXISTS shares (
     key        TEXT,                              -- server at-rest AES key (base64url)
     creator_ip TEXT,                              -- operator history: creator's IP
     picked_at  REAL,                              -- first receiver pickup (view) time
-    picked_ip  TEXT                               -- receiver's IP at first pickup
+    picked_ip  TEXT,                              -- receiver's IP at first pickup
+    sender_token TEXT                             -- secret only the creator's device knows (scrap)
 );
 CREATE TABLE IF NOT EXISTS items (
     id         TEXT PRIMARY KEY,
@@ -57,7 +58,7 @@ CREATE TABLE IF NOT EXISTS share_history (
     created_at   REAL NOT NULL,
     expires_at   REAL NOT NULL,
     ended_at     REAL NOT NULL,
-    ended_reason TEXT NOT NULL,            -- 'expired' | 'burned'
+    ended_reason TEXT NOT NULL,            -- 'expired' | 'burned' | 'scraped'
     burn         INTEGER NOT NULL DEFAULT 0,
     downloads    INTEGER NOT NULL DEFAULT 0,
     bytes_total  INTEGER NOT NULL DEFAULT 0,
@@ -85,6 +86,7 @@ def _row_to_share(code: str, row: sqlite3.Row) -> dict[str, Any]:
         "creator_ip": row["creator_ip"],
         "picked_at": row["picked_at"],
         "picked_ip": row["picked_ip"],
+        "sender_token": row["sender_token"],
     }
 
 
@@ -128,6 +130,8 @@ class SQLiteStore:
             self._conn.execute("ALTER TABLE shares ADD COLUMN picked_at REAL")
         if "picked_ip" not in cols:
             self._conn.execute("ALTER TABLE shares ADD COLUMN picked_ip TEXT")
+        if "sender_token" not in cols:
+            self._conn.execute("ALTER TABLE shares ADD COLUMN sender_token TEXT")
         hcols = {row["name"] for row in self._conn.execute("PRAGMA table_info(share_history)")}
         if "picked_at" not in hcols:
             self._conn.execute("ALTER TABLE share_history ADD COLUMN picked_at REAL")
@@ -153,14 +157,15 @@ class SQLiteStore:
         enc: bool = False,
         key: str | None = None,
         creator_ip: str | None = None,
+        sender_token: str | None = None,
         now: float | None = None,
     ) -> dict[str, Any]:
         now = time.time() if now is None else now
         with self._lock:
             self._conn.execute(
-                "INSERT INTO shares (code, ttl_key, ttl_seconds, created_at, expires_at, burn, enc, key, creator_ip) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (code, ttl_key, ttl_seconds, now, now + ttl_seconds, int(burn), int(enc), key, creator_ip),
+                "INSERT INTO shares (code, ttl_key, ttl_seconds, created_at, expires_at, burn, enc, key, creator_ip, sender_token) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (code, ttl_key, ttl_seconds, now, now + ttl_seconds, int(burn), int(enc), key, creator_ip, sender_token),
             )
             self._insert_items(code, items)
             self._conn.commit()

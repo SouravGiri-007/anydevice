@@ -831,6 +831,83 @@ def test_ttl_respected_on_poll(client):
     assert abs(data["expires_in"] - 300) < 2
 
 
+# -- scrap (sender-only self-destruct) ----------------------------------------
+
+
+def test_scrap_requires_sender_token(tmp_path):
+    client, app = _admin_app(tmp_path, admin_key="hk-secret")
+    j = _make_share(client).get_json()
+    code, token = j["code"], j["sender_token"]
+    assert token  # creation hands the creator's device an ownership secret
+
+    # No token / wrong token → 403, share untouched.
+    assert client.post(f"/api/share/{code}/scrap").status_code == 403
+    assert client.post(f"/api/share/{code}/scrap", json={"sender_token": "nope"}).status_code == 403
+    assert client.get(f"/api/share/{code}").status_code == 200
+
+    # Correct token → gone.
+    assert client.post(f"/api/share/{code}/scrap", json={"sender_token": token}).status_code == 200
+    assert client.get(f"/api/share/{code}").status_code == 404
+
+
+def test_scrap_purges_blobs_and_metadata(tmp_path):
+    client, app = _admin_app(tmp_path, admin_key="hk-secret")
+    j = _upload_file(client, "secret.bin", b"TOP SECRET DATA").get_json()
+    code, token = j["code"], j["sender_token"]
+    cfg = _cfg(app)
+    assert cfg.meta_store.get(code) is not None
+    blob_keys = [i["blob_key"] for i in cfg.meta_store.get(code)["items"] if i.get("blob_key")]
+    assert blob_keys  # content was staged under the code
+    assert all(cfg.blob_store.exists(k) for k in blob_keys)
+
+    r = client.post(f"/api/share/{code}/scrap", json={"sender_token": token})
+    assert r.status_code == 200
+    assert r.get_json()["ok"] is True
+    assert cfg.meta_store.get(code) is None
+    assert all(not cfg.blob_store.exists(k) for k in blob_keys)
+
+    # Second scrap finds nothing left.
+    assert client.post(f"/api/share/{code}/scrap", json={"sender_token": token}).status_code == 404
+
+
+def test_scrap_unknown_code_404(client):
+    assert client.post("/api/share/ZZZZZ/scrap", json={"sender_token": "anything"}).status_code == 404
+
+
+def test_scrap_records_history_but_token_never_leaks(tmp_path):
+    client, app = _admin_app(tmp_path, admin_key="hk-secret")
+    j = _make_share(client).get_json()
+    code, token = j["code"], j["sender_token"]
+
+    # The sender_token is only in the create response, never in public reads.
+    assert client.get(f"/api/share/{code}").get_json().get("sender_token") is None
+
+    client.post(f"/api/share/{code}/scrap", json={"sender_token": token})
+
+    body = client.get("/api/admin/history", headers={"X-Admin-Key": "hk-secret"}).get_json()
+    assert body["count"] == 1
+    h = body["history"][0]
+    assert h["code"] == code
+    assert h["status"] == "scraped"
+    # The ownership secret isn't snapshotted into history either.
+    assert h.get("sender_token") is None
+
+
+def test_scrap_unaffected_by_burn_semantics(client):
+    # Burn mode only self-destructs after every download; scrap is immediate.
+    j = _make_share(
+        client,
+        burn=True,
+        items=[
+            {"type": "text", "name": "one.txt", "content": "one"},
+            {"type": "text", "name": "two.txt", "content": "two"},
+        ],
+    ).get_json()
+    code, token = j["code"], j["sender_token"]
+    assert client.post(f"/api/share/{code}/scrap", json={"sender_token": token}).status_code == 200
+    assert client.get(f"/api/share/{code}").status_code == 404
+
+
 # -- caps & rate limits ------------------------------------------------------
 
 

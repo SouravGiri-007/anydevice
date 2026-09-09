@@ -27,6 +27,11 @@ devices:
   row, is never exposed over the API, and dies with the share.
 - **Burn mode.** With "self-destruct after download" on, the share is deleted
   once every item has been downloaded once (individually or via zip).
+- **Scrap it.** The creator's "scrap" button is no longer cosmetic — it
+  self-destructs the share on the server immediately, so the code stops working
+  for everyone, right away (recorded in Share History as `scraped`). Ownership
+  is proven with a `sender_token` handed out once at creation, never exposed
+  through public reads.
 - **Pickup status.** The sender's screen shows "picked up ✓" the moment a
   receiver opens the code — no manual refresh.
 - **Recent codes on this device.** The last codes you used live in
@@ -126,7 +131,7 @@ set the same variables in their dashboard instead; no `.env` file needed there.
 | `ANYDEVICE_TOTAL_MAX` | 100 MB | Total content cap per code |
 | `ANYDEVICE_ITEMS_MAX` | 50 | Max items per code |
 | `ANYDEVICE_LOOKUP_LIMIT` | 5/min/IP | Code-lookup rate limit (anti brute-force) |
-| `ANYDEVICE_TRUST_PROXY` | off | Use `X-Forwarded-For` for rate-limit keys |
+| `ANYDEVICE_TRUST_PROXY` | off | Use `X-Forwarded-For` for rate-limit keys + recorded IPs. **Set `1` behind a proxy (Render)** so per-client rate limits and dashboard IPs reflect real visitors; keep off elsewhere (it trusts a client-supplied header) |
 | `ANYDEVICE_ADMIN_KEY` | — | Enables the operator admin API (`GET /api/admin/stats`, `GET /api/admin/shares`, `GET /api/admin/history`) and the `/admin` dashboard. Never share or commit this. |
 | `SUPABASE_URL` | — | (supabase) project host |
 | `SUPABASE_SERVICE_ROLE_KEY` | — | (supabase) backend service key |
@@ -140,9 +145,10 @@ set the same variables in their dashboard instead; no `.env` file needed there.
 | `GET /api/health` | machine health: `{ok, service, backend}` — `503` when the metadata store is unreachable |
 | `GET /api/admin/stats` | operator-only aggregate stats — needs `X-Admin-Key` header; counts/averages only (total, 24h, active, today, yesterday, `last_7_days`), never IPs/codes/filenames/content |
 | `GET /api/admin/shares` | operator-only per-share detail feed for the dashboard — needs `X-Admin-Key` header; per-share code, item names/sizes, download counts, expiry/status, burn flag. No sender/receiver/IP/user data is stored or returned |
-| `GET /api/admin/history` | operator-only persistent Share History — needs `X-Admin-Key` header; every expired/burned share's metadata (code, item names/sizes/types, created/ended times, final download count, burn flag, creator IP, receiver pickup IP/time, per-download receiver audit). Content is deleted at purge, so entries can never be downloaded again |
+| `GET /api/admin/history` | operator-only persistent Share History — needs `X-Admin-Key` header; every expired/burned/scraped share's metadata (code, item names/sizes/types, created/ended times, final download count, burn flag, creator IP, receiver pickup IP/time, per-download receiver audit). Content is deleted at purge, so entries can never be downloaded again |
 | `GET /admin` | static admin dashboard page (public shell, no data). Key is entered client-side and every data request goes through the gate above |
-| `POST /api/share` | create a code + attach initial item(s) → `201 {code, items…}` |
+| `POST /api/share` | create a code + attach initial item(s) → `201 {code, items…, sender_token}` — the token is returned once, to the creator only, and never in public reads |
+| `POST /api/share/<code>/scrap` | sender-only self-destruct: proves ownership with `{sender_token}` from creation, then purges the share server-side immediately (recorded in Share History as `scraped`) → `200 {ok}`; wrong/missing token → `403`; already gone → `404` |
 | `POST /api/share/<code>` | append item(s) to a live code → `200` |
 | `GET /api/share/<code>` | fetch share metadata + item list |
 | `GET /api/share/<code>/status` | lightweight pickup poll (never marks viewed) |
@@ -156,7 +162,7 @@ Text travels as JSON, files as `multipart/form-data` (`meta` JSON +
 ## Tests
 
 ```bash
-.venv/Scripts/python -m pytest backend/test_api.py -q       # 50 API tests
+.venv/Scripts/python -m pytest backend/test_api.py -q       # 59 API tests
 .venv/Scripts/python -m pytest backend/test_supabase.py -q  # 4 live Supabase tests (skip if env unset)
 cd frontend && npm run build                                # typecheck + production build
 ```
@@ -175,10 +181,11 @@ served at `/admin`) — no build step, works anywhere:
 
 The page shows aggregate cards (total / active / today / yesterday), a 7-day bar
 chart, burn %, average share size, backend mode, a searchable/sortable table of
-individual shares, and a persistent **Share History**: expired/burned shares stay
-visible (code, filenames, sizes, created/ended times, download count, burn flag,
-creator IP, and — expanded per row — receiver pickup plus each download's IP and
-time), with search/filter across every history feature. Auto-refreshes every 60s.
+individual shares, and a persistent **Share History**: expired/burned/scraped
+shares stay visible (code, filenames, sizes, created/ended times, download count,
+burn flag, creator IP, and — expanded per row — receiver pickup plus each
+download's IP and time), with search/filter across every history feature.
+Auto-refreshes every 60s.
 Only the operator key can reach the `/api/admin/*` endpoints — the page shell
 itself is public but useless without the key.
 

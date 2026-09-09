@@ -31,7 +31,11 @@
    `GET /api/share/<code>/clipboard` to live-sync newly pasted text items.
 5. Items download individually (`/download/<id>`) or zipped (`/download-all`);
    `burn` shares self-destruct once every item is downloaded.
-6. Expired codes are purged by the cleanup loop; TTLs are 5m / 1h / 24h.
+7. Sender can **scrap** at any time: `POST /api/share/<code>/scrap` with the
+   `sender_token` issued at creation purges the share immediately — the same
+   purge path as expiry/burn, snapping the metadata into Share History as
+   `scraped`.
+8. Expired codes are purged by the cleanup loop; TTLs are 5m / 1h / 24h.
 
 ## Storage backends
 
@@ -51,6 +55,11 @@ One exception exists and is scoped to the operator's monitoring surfaces:
   (never overwritten by later polls);
 - **per-download audit** — each explicit download (single-item or zip) appends a
   `download_log` row with the downloader's IP and time.
+- **sender_token** — a random secret minted at creation and stored on the share
+  row so only the creator's device can scrap. This is an ownership credential,
+  not an identity: it names no person or device, it is never exposed through
+  public reads (only the `201` create response carries it), and it is deleted
+  with the share (never snapshotted into Share History).
 
 None of this is ever exposed through public endpoints: `_share_json` / status /
 clipboard responses stay free of IPs, and the data lives only in admin-only
@@ -72,8 +81,9 @@ Behind that gate there are three admin-only API surfaces:
 - `GET /api/admin/shares` — per-share feed for the dashboard: transfer codes,
   item names/sizes, download counts, expiry/status, burn flag, plus the pickup
   record and live download log for the share. Admin-only.
-- `GET /api/admin/history` — **persistent Share History**: when a share expires
-  or self-destructs via burn, `store.finalize(code, reason)` atomically snapshots
+- `GET /api/admin/history` — **persistent Share History**: when a share expires,
+  burns (after its final download), or is scrapped, `store.finalize(code, reason)`
+  atomically snapshots
   its metadata (code, item names/types/sizes, created/expires/ended timestamps,
   final download count, burn flag, creator IP, pickup record, and the full
   download audit) into a `share_history` row keyed on the code — an idempotent

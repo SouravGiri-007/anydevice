@@ -15,6 +15,7 @@ import {
   fetchClipboard,
   fetchShare,
   fetchShareStatus,
+  scrapShare,
   type Share,
   type Snippet,
   type TtlKey,
@@ -25,6 +26,7 @@ import { useTicker } from "./lib/useTicker";
 interface ActiveShare {
   data: Share;
   mode: "mine" | "theirs";
+  senderToken?: string;
 }
 
 interface ToastState {
@@ -188,6 +190,28 @@ export default function App() {
     [notify]
   );
 
+  /** "Scrap" = real server-side self-destruct for the creator's device. */
+  const handleScrap = useCallback(async () => {
+    const s = share;
+    const code = s?.data.code;
+    const token = s?.senderToken;
+    if (code && token) {
+      try {
+        await scrapShare(code, token);
+        dismissShare(`Code ${code} scrapped — gone for everyone.`);
+        return;
+      } catch (e) {
+        // Server refused (token lost / already gone) or unreachable — still
+        // close the sender's screen; without a scrap the code dies at TTL.
+        notify(
+          e instanceof ApiError ? e.message : "Could not scrap — closing on this device only.",
+          "error"
+        );
+      }
+    }
+    dismissShare("Fresh slate — drop something new.");
+  }, [share, dismissShare, notify]);
+
   /** Drop/paste: mint a portal or append to the open one. */
   const addItems = useCallback(
     async (files: File[], texts: Snippet[]) => {
@@ -206,7 +230,7 @@ export default function App() {
         const created = await createShare(files, texts, ttl, burn);
         await sleep(650);
         setAbsorbing(false);
-        setShare({ data: created, mode: "mine" });
+        setShare({ data: created, mode: "mine", senderToken: created.sender_token });
         notify(`Code ${created.code} is open — encrypted at rest.`, "ok");
       } catch (e) {
         setAbsorbing(false);
@@ -296,10 +320,8 @@ export default function App() {
                 share={share.data}
                 mode={share.mode}
                 onExpired={() => dismissShare(`Code ${share.data.code} closed — poof.`)}
-                onDiscard={() =>
-                  dismissShare(
-                    share.mode === "mine" ? "Fresh slate — drop something new." : undefined
-                  )
+                onDiscard={
+                  share.mode === "mine" ? handleScrap : () => dismissShare(undefined)
                 }
               />
             </div>

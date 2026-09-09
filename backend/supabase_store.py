@@ -30,7 +30,8 @@ CREATE TABLE IF NOT EXISTS shares (
     key        TEXT,                              -- server at-rest AES key (base64url)
     creator_ip TEXT,                              -- operator history: creator's IP
     picked_at  DOUBLE PRECISION,                  -- first receiver pickup (view) time
-    picked_ip  TEXT                               -- receiver's IP at first pickup
+    picked_ip  TEXT,                              -- receiver's IP at first pickup
+    sender_token TEXT                             -- secret only the creator's device knows (scrap)
 );
 CREATE TABLE IF NOT EXISTS items (
     id         TEXT PRIMARY KEY,
@@ -60,7 +61,7 @@ CREATE TABLE IF NOT EXISTS share_history (
     created_at   DOUBLE PRECISION NOT NULL,
     expires_at   DOUBLE PRECISION NOT NULL,
     ended_at     DOUBLE PRECISION NOT NULL,
-    ended_reason TEXT NOT NULL,            -- 'expired' | 'burned'
+    ended_reason TEXT NOT NULL,            -- 'expired' | 'burned' | 'scraped'
     burn         BOOLEAN NOT NULL DEFAULT FALSE,
     downloads    BIGINT NOT NULL DEFAULT 0,
     bytes_total  BIGINT NOT NULL DEFAULT 0,
@@ -87,6 +88,7 @@ class SupabaseStore:
             conn.execute("ALTER TABLE shares ADD COLUMN IF NOT EXISTS creator_ip TEXT")
             conn.execute("ALTER TABLE shares ADD COLUMN IF NOT EXISTS picked_at DOUBLE PRECISION")
             conn.execute("ALTER TABLE shares ADD COLUMN IF NOT EXISTS picked_ip TEXT")
+            conn.execute("ALTER TABLE shares ADD COLUMN IF NOT EXISTS sender_token TEXT")
             conn.execute("ALTER TABLE share_history ADD COLUMN IF NOT EXISTS picked_at DOUBLE PRECISION")
             conn.execute("ALTER TABLE share_history ADD COLUMN IF NOT EXISTS picked_ip TEXT")
             conn.execute("ALTER TABLE share_history ADD COLUMN IF NOT EXISTS download_log TEXT NOT NULL DEFAULT '[]'")
@@ -106,14 +108,15 @@ class SupabaseStore:
         enc: bool = False,
         key: str | None = None,
         creator_ip: str | None = None,
+        sender_token: str | None = None,
         now: float | None = None,
     ) -> dict[str, Any]:
         now = time.time() if now is None else now
         with self._conn() as conn:
             conn.execute(
-                "INSERT INTO shares (code, ttl_key, ttl_seconds, created_at, expires_at, burn, enc, key, creator_ip) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
-                (code, ttl_key, ttl_seconds, now, now + ttl_seconds, bool(burn), bool(enc), key, creator_ip),
+                "INSERT INTO shares (code, ttl_key, ttl_seconds, created_at, expires_at, burn, enc, key, creator_ip, sender_token) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                (code, ttl_key, ttl_seconds, now, now + ttl_seconds, bool(burn), bool(enc), key, creator_ip, sender_token),
             )
             self._insert_items(conn, code, items)
         return self.get(code)
@@ -178,6 +181,7 @@ class SupabaseStore:
                 "creator_ip": row["creator_ip"],
                 "picked_at": row["picked_at"],
                 "picked_ip": row["picked_ip"],
+                "sender_token": row["sender_token"],
             }
             item_rows = conn.execute(
                 "SELECT * FROM items WHERE code = %s ORDER BY pos ASC", (code,)

@@ -23,6 +23,12 @@ export interface Share {
   enc: boolean; // always false — content is encrypted at rest by the server
   bytes_total: number;
   items: ShareItem[];
+  /**
+   * Ownership secret issued to the creator's device at creation. Only present
+   * in the create response — never in public reads — and used to scrap the
+   * share server-side.
+   */
+  sender_token?: string;
 }
 
 export interface ShareStatusResponse {
@@ -145,6 +151,19 @@ export function fetchShareStatus(code: string): Promise<ShareStatusResponse> {
 /** Live clipboard sync: all text items inline for the receiving device. */
 export function fetchClipboard(code: string): Promise<ClipboardResponse> {
   return request(`/share/${code}/clipboard`);
+}
+
+/**
+ * Sender-only self-destruct. Proves ownership with the sender_token handed out
+ * at creation; the server purges the share immediately (recorded in Share
+ * History as "scraped"), so the code stops working for everyone right away.
+ */
+export function scrapShare(code: string, senderToken: string): Promise<{ ok: boolean; code: string }> {
+  return request(`/share/${code}/scrap`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sender_token: senderToken }),
+  });
 }
 
 export function itemUrl(code: string, itemId: string, inline = false): string {

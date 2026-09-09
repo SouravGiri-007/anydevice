@@ -27,7 +27,7 @@ import uuid
 import zipfile
 from functools import wraps
 from pathlib import Path
-from secrets import compare_digest
+from secrets import compare_digest, token_urlsafe
 from urllib.parse import quote
 
 from flask import Flask, Response, jsonify, request, send_file
@@ -584,12 +584,13 @@ def create_app(cfg: Config | None = None) -> Flask:
 
         code = generate_unique_code(cfg.meta_store.code_exists)
         key = new_key()
+        sender_token = token_urlsafe(24)
         staged_keys: list[str] = []
         try:
             items = _stage_file_items(cfg, code, specs, key)
             share = cfg.meta_store.create_share(
                 code, ttl_key, ttl_seconds, burn, items, enc=False, key=key,
-                creator_ip=_client_ip(cfg),
+                creator_ip=_client_ip(cfg), sender_token=sender_token,
             )
         except BlobTooLargeError:
             raise ApiError(413, f"File too large — cap is {cfg.file_max_bytes // (1024*1024)}MB per file.")
@@ -599,7 +600,9 @@ def create_app(cfg: Config | None = None) -> Flask:
             cfg.blob_store.delete_prefix(f"shares/{code}")
             cfg.meta_store.delete(code)
             raise
-        return jsonify(_share_json(share)), 201
+        payload = _share_json(share)
+        payload["sender_token"] = sender_token
+        return jsonify(payload), 201
 
     # -- fetch --------------------------------------------------------------
 
@@ -689,18 +692,40 @@ def create_app(cfg: Config | None = None) -> Flask:
             return False
         return cfg.meta_store.all_items_downloaded(share["code"])
 
-    def _purge_share(share: dict) -> None:
+    def _purge_share(share: dict, reason: str = "burned") -> None:
         """Delete a share's data AND snapshot it to admin history.
 
-        Called from download streams' ``finally`` and the expiry path, so it must
-        never raise. ``finalize`` writes the history entry (idempotently) and
-        drops the metadata; blobs go next. Physical content is not retained.
+        Called from download streams' ``finally``, the expiry path, and the
+        sender's scrap action, so it must never raise. ``finalize`` writes the
+        history entry (idempotently) and drops the metadata; blobs go next.
+        Physical content is not retained.
         """
         try:
-            cfg.meta_store.finalize(share["code"], "burned")
+            cfg.meta_store.finalize(share["code"], reason)
             cfg.blob_store.delete_prefix(f"shares/{share['code']}")
         except Exception:  # noqa: BLE001
             log.exception("purge failed for %s — will retry on next cleanup", share["code"])
+
+    # -- scrap (sender-only self-destruct) ----------------------------------
+
+    @app.post("/api/share/<code_raw>/scrap")
+    def scrap_share(code_raw: str):
+        """Immediately destroy a share, server-side.
+
+        The creator's device proves ownership with the ``sender_token`` it was
+        handed at creation (never exposed through public reads). The share is
+        purged right now — not hidden locally, not at TTL — and its metadata is
+        snapshotted to Share History as ``scraped``. Without a matching token
+        this is a 403, and a share that's already gone is a 404."""
+        rate_limit("create", cfg.create_limit)
+        share = fetch_live_share(code_raw)
+        expected = share.get("sender_token") or ""
+        body = request.get_json(silent=True) or {}
+        given = body.get("sender_token") or ""
+        if not expected or not given or not compare_digest(given, expected):
+            raise ApiError(403, "That code belongs to another device.", code="forbidden")
+        _purge_share(share, reason="scraped")
+        return jsonify({"ok": True, "code": share["code"]}), 200
 
     # -- download one -------------------------------------------------------
 
