@@ -49,8 +49,12 @@ export class ApiError extends Error {
 const TTL_OPTIONS: Record<TtlKey, string> = { "5m": "5 min", "1h": "1 hour", "24h": "24 hours" };
 export { TTL_OPTIONS };
 
+// API base. In dev the Vite proxy serves /api from the local backend; in a
+// production build, VITE_API_BASE points at the deployed backend (e.g. Render).
+const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? "";
+
 function endpoint(path: string) {
-  return `/api${path}`;
+  return `${API_BASE}/api${path}`;
 }
 
 async function request(path: string, init?: RequestInit): Promise<any> {
