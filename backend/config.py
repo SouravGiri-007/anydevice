@@ -75,6 +75,10 @@ class Config:
     # so rate limiting keys on the real client IP.
     trust_proxy: bool = False
 
+    # Operator-only admin endpoint secret. When empty the /api/admin/stats
+    # route is disabled (no key configured → nothing to brute-force).
+    admin_key: str = ""
+
     # Backend storage engine: "disk" (SQLite + local blobs) or "supabase"
     # (Postgres + Supabase Storage).
     backend: str = "disk"
@@ -111,6 +115,7 @@ class Config:
             max_filename_length=_env_int("ANYDEVICE_MAX_FILENAME", cls.max_filename_length),
             max_text_bytes=_env_int("ANYDEVICE_MAX_TEXT", cls.max_text_bytes),
             trust_proxy=_env_bool("ANYDEVICE_TRUST_PROXY", False),
+            admin_key=os.environ.get("ANYDEVICE_ADMIN_KEY", "").strip(),
             backend=os.environ.get("ANYDEVICE_BACKEND", "disk").strip().lower(),
             supabase_url=os.environ.get("SUPABASE_URL", "").strip().rstrip("/"),
             supabase_service_key=os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "").strip(),

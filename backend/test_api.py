@@ -331,6 +331,71 @@ def test_clipboard_404_when_expired(client):
     assert client.get(f"/api/share/{code}/clipboard").status_code == 404
 
 
+# -- operator stats (admin) ---------------------------------------------------
+
+
+def _admin_app(tmp_path, admin_key="hk-operator-key", **cfg_kw):
+    cfg = Config(
+        data_dir=tmp_path / "data",
+        lookup_limit=1000,
+        download_limit=1000,
+        create_limit=1000,
+        admin_key=admin_key,
+        **cfg_kw,
+    )
+    app = create_app(cfg)
+    app.config["TESTING"] = True
+    return app.test_client(), app
+
+
+def test_admin_stats_disabled_when_unconfigured(client):
+    r = client.get("/api/admin/stats")
+    assert r.status_code == 503
+
+
+def test_admin_stats_requires_valid_key(tmp_path):
+    client, _ = _admin_app(tmp_path, admin_key="hk-secret")
+    assert client.get("/api/admin/stats").status_code == 401
+    assert client.get("/api/admin/stats", headers={"X-Admin-Key": "wrong"}).status_code == 401
+    r = client.get("/api/admin/stats", headers={"X-Admin-Key": "hk-secret"})
+    assert r.status_code == 200
+
+
+def test_admin_stats_aggregates_pii_free(tmp_path):
+    client, app = _admin_app(tmp_path, admin_key="hk-secret")
+    # Three shares: 2-byte text, 5-byte burn text, 20-byte file.
+    _make_share(client, items=[{"type": "text", "name": "a.txt", "content": "hi"}])
+    _make_share(client, burn=True, items=[{"type": "text", "name": "b.txt", "content": "hello"}])
+    _upload_file(client, "c.bin", b"01234567890123456789")
+    # Expire the burn share → inactive but still counted in totals.
+    code = _cfg_for(app).meta_store._conn.execute("SELECT code FROM shares").fetchall()[1]["code"]
+    _force_expiry(app, code)
+
+    r = client.get("/api/admin/stats", headers={"X-Admin-Key": "hk-secret"})
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["ok"] is True
+    assert body["backend"] == "disk"
+    assert body["shares_total"] == 3
+    assert body["shares_24h"] == 3
+    assert body["shares_active"] == 2
+    assert body["burn_pct"] == 33.3
+    assert body["avg_share_bytes"] == 9.0
+    # No PII / content-identifying data anywhere in the payload.
+    payload = json.dumps(body)
+    for banned in ("a.txt", "b.txt", "c.bin", "hello", "0123456789"):
+        assert banned not in payload
+
+
+def test_admin_stats_rate_limited(tmp_path):
+    client, _ = _admin_app(tmp_path, admin_key="hk-secret")
+    for _ in range(10):
+        assert client.get("/api/admin/stats", headers={"X-Admin-Key": "hk-secret"}).status_code == 200
+    assert (
+        client.get("/api/admin/stats", headers={"X-Admin-Key": "hk-secret"}).status_code == 429
+    )
+
+
 # -- server-managed at-rest encryption ----------------------------------------
 
 

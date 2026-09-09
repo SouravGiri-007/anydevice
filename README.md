@@ -127,6 +127,7 @@ set the same variables in their dashboard instead; no `.env` file needed there.
 | `ANYDEVICE_ITEMS_MAX` | 50 | Max items per code |
 | `ANYDEVICE_LOOKUP_LIMIT` | 5/min/IP | Code-lookup rate limit (anti brute-force) |
 | `ANYDEVICE_TRUST_PROXY` | off | Use `X-Forwarded-For` for rate-limit keys |
+| `ANYDEVICE_ADMIN_KEY` | — | Enables `GET /api/admin/stats` (operator-only aggregate stats) |
 | `SUPABASE_URL` | — | (supabase) project host |
 | `SUPABASE_SERVICE_ROLE_KEY` | — | (supabase) backend service key |
 | `SUPABASE_DATABASE_URL` | — | (supabase) Postgres pooler/direct URI |
@@ -137,6 +138,7 @@ set the same variables in their dashboard instead; no `.env` file needed there.
 | | |
 | --- | --- |
 | `GET /api/health` | machine health: `{ok, service, backend}` — `503` when the metadata store is unreachable |
+| `GET /api/admin/stats` | operator-only aggregate stats — needs `X-Admin-Key` header (see [ARCHITECTURE.md](ARCHITECTURE.md)); returns plain counts/averages only, never IPs/codes/filenames/content |
 | `POST /api/share` | create a code + attach initial item(s) → `201 {code, items…}` |
 | `POST /api/share/<code>` | append item(s) to a live code → `200` |
 | `GET /api/share/<code>` | fetch share metadata + item list |
@@ -150,7 +152,7 @@ Text travels as JSON, files as `multipart/form-data` (`meta` JSON +
 ## Tests
 
 ```bash
-.venv/Scripts/python -m pytest backend/test_api.py -q       # 32 API tests
+.venv/Scripts/python -m pytest backend/test_api.py -q       # 40 API tests
 .venv/Scripts/python -m pytest backend/test_supabase.py -q  # 4 live Supabase tests (skip if env unset)
 cd frontend && npm run build                                # typecheck + production build
 ```

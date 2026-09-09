@@ -8,6 +8,7 @@ Endpoints (per PRD section 9):
   GET  /api/share/<code>/clipboard      receiver's live text sync (inline content)
   GET  /api/share/<code>/download/<id>  stream one item
   GET  /api/share/<code>/download-all   zip + stream everything
+  GET  /api/admin/stats                 operator-only aggregate stats (X-Admin-Key)
 
 Run:  python -m backend.app            (or: flask --app backend.app run)
 """
@@ -21,7 +22,9 @@ import tempfile
 import time
 import uuid
 import zipfile
+from functools import wraps
 from pathlib import Path
+from secrets import compare_digest
 from urllib.parse import quote
 
 from flask import Flask, Response, jsonify, request, send_file
@@ -397,7 +400,7 @@ def create_app(cfg: Config | None = None) -> Flask:
             response.headers["Access-Control-Allow-Origin"] = origin
             response.headers["Vary"] = "Origin"
         response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
-        response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type, X-Admin-Key"
         response.headers["Access-Control-Expose-Headers"] = "Content-Disposition"
         return response
 
@@ -453,6 +456,48 @@ def create_app(cfg: Config | None = None) -> Flask:
             purge_once(cfg.meta_store, cfg.blob_store)
             raise ApiError(404, "That share has expired.", code="expired")
         return share
+
+    # -- operator stats ------------------------------------------------------
+
+    def require_admin(f):
+        """Shared-secret gate for operator-only routes (ANYDEVICE_ADMIN_KEY).
+
+        No user accounts: this is a single service-level key for the operator.
+        Requests are throttled on the same in-memory limiter used everywhere
+        else so a brute-forcer can't sit and guess the header forever. When no
+        key is configured the route is disabled entirely (503)."""
+
+        @wraps(f)
+        def wrapper(*args, **kwargs):
+            rate_limit("admin", 10)
+            expected = cfg.admin_key
+            if not expected:
+                raise ApiError(503, "Operator stats are disabled — set ANYDEVICE_ADMIN_KEY.")
+            given = request.headers.get("X-Admin-Key", "")
+            if not given or not compare_digest(given, expected):
+                raise ApiError(401, "Missing or invalid admin key.", code="forbidden")
+            return f(*args, **kwargs)
+
+        return wrapper
+
+    @app.get("/api/admin/stats")
+    @require_admin
+    def admin_stats():
+        """Operator-only aggregate stats (PII-free).
+
+        Purposely returns plain counts/averages — no IPs, codes, filenames, or
+        content ever cross the wire here, matching the project's no-tracking
+        stance. Hit it with curl/Postman: -H \"X-Admin-Key: <ANYDEVICE_ADMIN_KEY>\"
+        """
+        now = time.time()
+        return jsonify(
+            {
+                "ok": True,
+                "backend": cfg.backend,
+                "generated_at": now,
+                **cfg.meta_store.stats(now=now),
+            }
+        )
 
     # -- create -------------------------------------------------------------
 

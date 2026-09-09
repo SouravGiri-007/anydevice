@@ -234,3 +234,36 @@ class SupabaseStore:
         """Tiny read that keeps the Supabase free project awake."""
         with self._conn() as conn:
             conn.execute("SELECT 1")
+
+    # -- operator stats --------------------------------------------------------
+
+    def stats(self, now: float | None = None) -> dict[str, Any]:
+        """Aggregate, PII-free operational stats.
+
+        Pure counts/averages over the whole store — no codes, names, filenames,
+        IPs, or content ever leave this method. Matches the no-tracking stance.
+        """
+        now = time.time() if now is None else now
+        day_ago = now - 86400
+        with self._conn() as conn:
+            total = conn.execute("SELECT COUNT(*) AS n FROM shares").fetchone()["n"]
+            recent = conn.execute(
+                "SELECT COUNT(*) AS n FROM shares WHERE created_at >= %s", (day_ago,)
+            ).fetchone()["n"]
+            active = conn.execute(
+                "SELECT COUNT(*) AS n FROM shares WHERE expires_at > %s", (now,)
+            ).fetchone()["n"]
+            burn = conn.execute(
+                "SELECT COUNT(*) AS n FROM shares WHERE burn = TRUE"
+            ).fetchone()["n"]
+            avg_row = conn.execute(
+                "SELECT AVG(sz) AS a FROM (SELECT SUM(size) AS sz FROM items GROUP BY code) t"
+            ).fetchone()
+        avg = avg_row["a"] if avg_row and avg_row["a"] is not None else 0
+        return {
+            "shares_total": total,
+            "shares_24h": recent,
+            "shares_active": active,
+            "burn_pct": round(100.0 * burn / total, 1) if total else 0.0,
+            "avg_share_bytes": round(float(avg), 1),
+        }

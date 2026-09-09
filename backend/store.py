@@ -242,3 +242,36 @@ class SQLiteStore:
 
     def count(self) -> int:
         return self._conn.execute("SELECT COUNT(*) FROM shares").fetchone()[0]
+
+    # -- operator stats --------------------------------------------------------
+
+    def stats(self, now: float | None = None) -> dict[str, Any]:
+        """Aggregate, PII-free operational stats.
+
+        Pure counts/averages over the whole store — no codes, names, filenames,
+        IPs, or content ever leave this method. Matches the no-tracking stance.
+        """
+        now = time.time() if now is None else now
+        day_ago = now - 86400
+        with self._lock:
+            total = self._conn.execute("SELECT COUNT(*) FROM shares").fetchone()[0]
+            recent = self._conn.execute(
+                "SELECT COUNT(*) FROM shares WHERE created_at >= ?", (day_ago,)
+            ).fetchone()[0]
+            active = self._conn.execute(
+                "SELECT COUNT(*) FROM shares WHERE expires_at > ?", (now,)
+            ).fetchone()[0]
+            burn = self._conn.execute(
+                "SELECT COUNT(*) FROM shares WHERE burn = 1"
+            ).fetchone()[0]
+            avg_row = self._conn.execute(
+                "SELECT AVG(sz) FROM (SELECT SUM(size) AS sz FROM items GROUP BY code)"
+            ).fetchone()
+        avg = avg_row[0] if avg_row and avg_row[0] is not None else 0
+        return {
+            "shares_total": total,
+            "shares_24h": recent,
+            "shares_active": active,
+            "burn_pct": round(100.0 * burn / total, 1) if total else 0.0,
+            "avg_share_bytes": round(float(avg), 1),
+        }
