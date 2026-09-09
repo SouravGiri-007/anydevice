@@ -9,6 +9,8 @@ Endpoints (per PRD section 9):
   GET  /api/share/<code>/download/<id>  stream one item
   GET  /api/share/<code>/download-all   zip + stream everything
   GET  /api/admin/stats                 operator-only aggregate stats (X-Admin-Key)
+  GET  /api/admin/shares                operator-only share detail feed (X-Admin-Key)
+  GET  /admin                           static admin dashboard shell (public; data is key-gated)
 
 Run:  python -m backend.app            (or: flask --app backend.app run)
 """
@@ -381,6 +383,8 @@ def create_app(cfg: Config | None = None) -> Flask:
     cfg = cfg or Config.from_env()
     _build_stores(cfg)
     limiter = RateLimiter()
+    global _ADMIN_HTML
+    _ADMIN_HTML = Path(__file__).resolve().parent / "static" / "admin.html"
 
     app = Flask(__name__)
     app.config["JSON_SORT_KEYS"] = False
@@ -497,6 +501,46 @@ def create_app(cfg: Config | None = None) -> Flask:
                 "generated_at": now,
                 **cfg.meta_store.stats(now=now),
             }
+        )
+
+    @app.get("/api/admin/shares")
+    @require_admin
+    def admin_shares():
+        """Operator-only per-share detail feed for the private dashboard.
+
+        Same X-Admin-Key gate as /api/admin/stats. Returns only what the system
+        actually tracks (code, item names/sizes, download counts, expiry) — no
+        sender/receiver identities, IPs, or device info exist anywhere, so none
+        is returned. Codes are single-use transfer handles, not user accounts.
+        """
+        now = time.time()
+        shares = cfg.meta_store.admin_shares(now=now)
+        return jsonify(
+            {
+                "ok": True,
+                "backend": cfg.backend,
+                "generated_at": now,
+                "count": len(shares),
+                "shares": shares,
+            }
+        )
+
+    @app.get("/admin")
+    def admin_page():
+        """Static shell for the admin dashboard (no data).
+
+        Public on purpose: browsers can't send the X-Admin-Key header, so the
+        page prompts for the key client-side and every data call goes through
+        the require_admin gate above. Serving the shell leaks nothing — without
+        the key it cannot load a single share or stat.
+        """
+        html = _ADMIN_HTML
+        if not html.exists():
+            return _err(404, "admin.html is not bundled with this build.")
+        return Response(
+            html.read_text(encoding="utf-8"),
+            mimetype="text/html",
+            headers={"Cache-Control": "no-store"},
         )
 
     # -- create -------------------------------------------------------------

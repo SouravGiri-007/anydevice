@@ -43,15 +43,33 @@ Storage bucket; blobs are still encrypted at rest before upload.
 
 No accounts, no cookies, no tracking, no persistent user data. The store keeps
 share codes, per-item metadata, and encrypted content for the TTL window only.
-The one aggregate surface is `GET /api/admin/stats`:
 
-- **Operator-only**: requires `X-Admin-Key: <ANYDEVICE_ADMIN_KEY>` (set via env;
-  endpoint is disabled with `503` when the key is unset). Requests are
+The operator front-door is a **static shell at `GET /admin`**: it is served
+publicly (a browser can't send the `X-Admin-Key` header), but it contains zero
+data — the key is entered client-side and kept in `sessionStorage` for the tab
+only (never `localStorage`). Every data request from the page goes through the
+`X-Admin-Key` gate below.
+
+Behind that gate there are two admin-only API surfaces:
+
+- `GET /api/admin/stats` — **non-PII by construction**: plain counts/averages —
+  total shares (all-time + last 24h), active (non-expired) shares, burn-mode
+  usage, average share size, and a calendar-based daily breakdown
+  (`shares_today`, `shares_yesterday`, `last_7_days`) in UTC. No IPs, codes,
+  filenames, or content-identifying data.
+- `GET /api/admin/shares` — per-share **metadata only**: transfer codes, item
+  names/sizes, download counts, expiry/status, and the burn flag. This exists
+  purely so the operator can monitor individual shares; it is intentionally
+  richer than `stats` but still bounded by what the system tracks.
+
+Both are:
+- **Operator-only**: require `X-Admin-Key: <ANYDEVICE_ADMIN_KEY>` (env-set);
+  endpoints are disabled with `503` when the key is unset. Requests are
   rate-limited on the same in-memory limiter used by public routes.
-- **Non-PII by construction**: the response is plain counts/averages — total
-  shares (all-time and last 24h), active (non-expired) shares, burn-mode usage
-  percentage, and average share size. It never includes IPs, codes, filenames,
-  or any content-identifying data.
+- **Bounded by design**: any device sends/receives via anonymous codes; there is
+  no sender/receiver identity, IP, device fingerprint, or user account anywhere
+  in the system, so the admin API has nothing like that to return. The dashboard
+  UI states this explicitly.
 
 ## Configuration
 

@@ -1,0 +1,437 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AnyDevice · Admin</title>
+<style>
+  :root{
+    --bg:#0a0a12; --panel:#12121f; --panel2:#161628; --line:#24243a;
+    --txt:#eae7f7; --muted:#8b87a8; --dim:#5f5c7d;
+    --violet:#9f7aea; --violet2:#4c3a8f; --mint:#4ade80; --rose:#f87171; --amber:#fbbf24;
+    --radius:14px;
+  }
+  *{box-sizing:border-box; margin:0; padding:0}
+  body{
+    background:
+      radial-gradient(1200px 500px at 50% -100px, rgba(124,58,237,.18), transparent 60%),
+      var(--bg);
+    color:var(--txt); font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    min-height:100vh; padding:24px 20px 60px;
+  }
+  .hidden{display:none !important}
+  .wrap{max-width:1060px; margin:0 auto}
+
+  /* header */
+  header{display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:22px}
+  header .logo{width:30px; height:30px; border-radius:9px; flex:none; background:
+    conic-gradient(from 210deg, #9f7aea, #4c3a8f, #7c3aed, #9f7aea);
+    box-shadow:0 0 14px rgba(124,58,237,.35)}
+  header h1{font-size:19px; font-weight:700; letter-spacing:.2px}
+  header .sub{color:var(--muted); font-size:12px}
+  .backend-chip{
+    margin-left:auto; display:flex; align-items:center; gap:7px;
+    background:var(--panel2); border:1px solid var(--line); color:var(--muted);
+    padding:6px 12px; border-radius:999px; font-size:12px;
+  }
+  .dot{width:8px; height:8px; border-radius:50%; background:var(--mint); box-shadow:0 0 8px var(--mint)}
+  .refresh,.keychange{
+    background:var(--panel2); border:1px solid var(--line); color:var(--txt);
+    padding:6px 12px; border-radius:999px; font-size:12px; cursor:pointer
+  }
+  .refresh:hover,.keychange:hover{border-color:var(--violet)}
+  .refresh:disabled{opacity:.5}
+
+  /* cards */
+  .cards{display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:14px}
+  .card{
+    background:linear-gradient(180deg, var(--panel2), var(--panel));
+    border:1px solid var(--line); border-radius:var(--radius); padding:18px 18px 14px;
+  }
+  .card .label{color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.7px; margin-bottom:8px}
+  .card .value{font-size:30px; font-weight:800; letter-spacing:.3px}
+  .card .hint{color:var(--dim); font-size:11px; margin-top:3px}
+  .cards .card .value.accent{color:var(--violet)}
+
+  .two{display:grid; grid-template-columns:1.45fr 1fr; gap:14px; margin-bottom:14px}
+  .chart-wrap{position:relative}
+  canvas{width:100%; height:auto; display:block}
+  .kpi-grid{display:grid; grid-template-columns:1fr 1fr; gap:12px}
+  .kpi-grid .kpi{background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:12px}
+  .kpi-grid .kpi .k{color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.5px}
+  .kpi-grid .kpi .v{font-size:19px; font-weight:700; margin-top:4px}
+
+  .sect-head{display:flex; align-items:center; gap:10px; margin:26px 0 14px}
+  .sect-head h2{font-size:15px; font-weight:700}
+  .sect-head .count{color:var(--dim); font-size:12px}
+
+  /* toolbar */
+  .toolbar{display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px}
+  .toolbar input,.toolbar select{
+    background:var(--panel); border:1px solid var(--line); color:var(--txt);
+    border-radius:10px; padding:9px 12px; font-size:13px; outline:none
+  }
+  .toolbar input{flex:1; min-width:180px}
+  .toolbar select{cursor:pointer}
+  .toolbar input:focus,.toolbar select:focus{border-color:var(--violet)}
+  .toolbar .placeholder{color:var(--dim)}
+
+  /* rows (desktop grid table) */
+  .rows-head,.row{
+    display:grid; gap:10px; align-items:center;
+    grid-template-columns:74px 100px 1fr 80px 74px 150px 130px 70px 46px;
+  }
+  .rows-head{
+    color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.6px;
+    padding:0 14px 8px;
+  }
+  .rows{display:flex; flex-direction:column; gap:6px}
+  .row{
+    background:var(--panel); border:1px solid var(--line); border-radius:11px;
+    padding:10px 14px; font-size:13px;
+  }
+  .row:hover{border-color:#33305c}
+  .cell{overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .code{font-family:ui-monospace,Consolas,monospace; color:var(--violet); font-weight:700}
+  .files{color:var(--txt)}
+  .files small{display:block; color:var(--dim); font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  .type-badge{font-size:11px; padding:3px 8px; border-radius:999px; white-space:nowrap}
+  .type-file{background:rgba(159,122,234,.15); color:var(--violet); border:1px solid rgba(159,122,234,.35)}
+  .type-text{background:rgba(251,191,36,.12); color:var(--amber); border:1px solid rgba(251,191,36,.3)}
+  .type-mixed{background:rgba(139,135,168,.15); color:var(--muted); border:1px solid rgba(139,135,168,.3)}
+  .status{display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:600}
+  .status::before{content:""; width:7px; height:7px; border-radius:50%}
+  .status.on{color:var(--mint)} .status.on::before{background:var(--mint); box-shadow:0 0 7px var(--mint)}
+  .status.off{color:var(--rose)} .status.off::before{background:var(--rose)}
+  .dl{color:var(--muted); font-variant-numeric:tabular-nums}
+  .burn{font-size:11px; color:var(--rose)}
+  .empty{color:var(--dim); text-align:center; padding:24px; border:1px dashed var(--line); border-radius:11px}
+
+  /* gate */
+  #gate{position:fixed; inset:0; display:flex; align-items:center; justify-content:center; z-index:50;
+    background:rgba(8,8,14,.78); backdrop-filter:blur(6px)}
+  .gate-card{width:min(380px, 92vw); background:var(--panel2); border:1px solid var(--line);
+    border-radius:18px; padding:26px; text-align:center}
+  .gate-card .logo{width:40px; height:40px; border-radius:12px; margin:0 auto 14px; background:
+    conic-gradient(from 210deg, #9f7aea, #4c3a8f, #7c3aed, #9f7aea);
+    box-shadow:0 0 18px rgba(124,58,237,.4)}
+  .gate-card h2{font-size:17px; margin-bottom:6px}
+  .gate-card p{color:var(--muted); font-size:12px; margin-bottom:18px}
+  .gate-card input{
+    width:100%; background:#0d0d19; border:1px solid var(--line); color:var(--txt);
+    border-radius:11px; padding:12px 14px; font-size:14px; margin-bottom:12px; outline:none
+  }
+  .gate-card input:focus{border-color:var(--violet)}
+  .gate-card button{
+    width:100%; background:linear-gradient(90deg,var(--violet),var(--violet2)); color:#fff;
+    border:none; border-radius:11px; padding:12px; font-size:14px; font-weight:700; cursor:pointer
+  }
+  .gate-card .err{color:var(--rose); font-size:12px; min-height:16px; margin-top:10px}
+  .gate-card .hint{color:var(--dim); font-size:11px; margin-top:12px}
+
+  footer{margin-top:34px; color:var(--dim); font-size:11.5px; line-height:1.6;
+    border-top:1px solid var(--line); padding-top:14px; max-width:900px}
+
+  /* mobile: cards instead of table */
+  @media (max-width:760px){
+    .cards{grid-template-columns:1fr 1fr}
+    .two{grid-template-columns:1fr}
+    .rows-head{display:none}
+    .row{
+      grid-template-columns:1fr 1fr; gap:8px 12px; padding:14px;
+    }
+    .cell{white-space:normal}
+    .cell::before{content:attr(data-label) ": "; color:var(--dim); font-size:11px; display:block; margin-bottom:2px}
+    .cell.status,.cell.code-cell{border-bottom:1px solid var(--line); padding-bottom:9px; margin-bottom:2px}
+    .code-cell,.cell.status{display:flex; align-items:center; justify-content:space-between}
+  }
+</style>
+</head>
+<body>
+<div class="wrap" id="dash">
+
+  <!-- key gate -->
+  <div id="gate">
+    <div class="gate-card">
+      <div class="logo"></div>
+      <h2>AnyDevice · Admin</h2>
+      <p>Enter the operator admin key to see stats &amp; share details.</p>
+      <input id="keyInput" type="password" placeholder="ANYDEVICE_ADMIN_KEY" autocomplete="off">
+      <button id="keyBtn">Unlock dashboard</button>
+      <div class="err" id="gateErr"></div>
+      <div class="hint">Key is kept in memory for this tab only — nothing is stored on disk.</div>
+    </div>
+  </div>
+
+  <header>
+    <div class="logo"></div>
+    <div>
+      <h1>AnyDevice Dashboard</h1>
+      <div class="sub">Operator monitoring · aggregate + per-share view</div>
+    </div>
+    <div class="backend-chip"><span class="dot" id="liveDot"></span><span id="backendLabel">—</span></div>
+    <button class="refresh" id="refreshBtn">Refresh</button>
+    <button class="keychange" id="keyChangeBtn">Change key</button>
+  </header>
+
+  <section class="cards">
+    <div class="card"><div class="label">Total shares</div><div class="value accent" id="cTotal">—</div><div class="hint">all-time created</div></div>
+    <div class="card"><div class="label">Active now</div><div class="value" id="cActive">—</div><div class="hint">not yet expired</div></div>
+    <div class="card"><div class="label">Today (UTC)</div><div class="value" id="cToday">—</div><div class="hint">created since midnight UTC</div></div>
+    <div class="card"><div class="label">Yesterday</div><div class="value" id="cYest">—</div><div class="hint">calendar day before today</div></div>
+  </section>
+
+  <section class="two">
+    <div class="card chart-wrap">
+      <div class="label">Shares created · last 7 days</div>
+      <canvas id="chart" width="620" height="240"></canvas>
+    </div>
+    <div class="card">
+      <div class="label">Health &amp; config</div>
+      <div class="kpi-grid">
+        <div class="kpi"><div class="k">Burn-after-download</div><div class="v" id="kBurn">—</div></div>
+        <div class="kpi"><div class="k">Avg share size</div><div class="v" id="kAvg">—</div></div>
+        <div class="kpi"><div class="k">Created in last 24h</div><div class="v" id="k24h">—</div></div>
+        <div class="kpi"><div class="k">Backend</div><div class="v" id="kBackend">—</div></div>
+      </div>
+    </div>
+  </section>
+
+  <div class="sect-head">
+    <h2>Individual shares</h2>
+    <span class="count" id="countLabel">—</span>
+  </div>
+
+  <div class="toolbar">
+    <input id="q" type="search" placeholder="Search code or filename…" autocomplete="off">
+    <select id="fStatus">
+      <option value="all">Status: all</option>
+      <option value="active">Active</option>
+      <option value="expired">Expired</option>
+    </select>
+    <select id="fType">
+      <option value="all">Type: all</option>
+      <option value="file">File</option>
+      <option value="text">Text</option>
+    </select>
+    <select id="sort">
+      <option value="newest">Sort: newest first</option>
+      <option value="oldest">Sort: oldest first</option>
+      <option value="size">Sort: largest first</option>
+      <option value="sizeAsc">Sort: smallest first</option>
+    </select>
+  </div>
+
+  <div class="rows-head">
+    <span>Status</span><span>Code</span><span>Files / items</span><span>Size</span>
+    <span>Type</span><span>Created</span><span>Expires</span><span>Downloads</span><span>Burn</span>
+  </div>
+  <div class="rows" id="rows"></div>
+
+  <footer>
+    <strong>Privacy:</strong> this page shows aggregate stats and per-share metadata (codes, filenames, sizes,
+    download counts) after authenticating with the operator key. AnyDevice <em>does not collect</em> sender or
+    receiver identities, IP addresses, device info, or user accounts — no such fields exist or are shown. The
+    dashboard code is a public static shell; every data request requires the <code>X-Admin-Key</code> header.
+  </footer>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var key = sessionStorage.getItem("adk") || "";
+
+  var state = { stats: null, shares: [], q: "", fStatus: "all", fType: "all", sort: "newest" };
+
+  var $ = function (id) { return document.getElementById(id); };
+  var esc = function (s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  };
+
+  function fmtBytes(n) {
+    if (n == null) return "—";
+    if (n === 0) return "0 B";
+    var u = ["B", "KB", "MB", "GB"];
+    var i = Math.min(u.length - 1, Math.floor(Math.log(n) / Math.log(1024)));
+    return (n / Math.pow(1024, i)).toFixed(i === 0 ? 0 : 1) + " " + u[i];
+  }
+  function fmtDate(t) {
+    if (t == null) return "—";
+    return new Date(t * 1000).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+  }
+  function fmtRel(t) {
+    if (t == null) return "—";
+    var s = Math.round(t);
+    var d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
+    if (d > 0) return d + "d " + h + "h";
+    if (h > 0) return h + "h " + m + "m";
+    if (m > 0) return m + "m";
+    return s + "s";
+  }
+  function shareType(sh) {
+    var hasFile = false, hasText = false;
+    (sh.items || []).forEach(function (it) { if (it.type === "file") hasFile = true; else hasText = true; });
+    return hasFile && hasText ? "mixed" : (hasFile ? "file" : "text");
+  }
+
+  function apiFetch(path) {
+    return fetch(path, { headers: key ? { "X-Admin-Key": key } : {} }).then(function (r) {
+      if (r.status === 401) { showGate(); throw new Error("auth"); }
+      if (!r.ok) {
+        return r.json().catch(function () { return null; }).then(function (b) {
+          throw new Error((b && b.error) || ("HTTP " + r.status));
+        });
+      }
+      return r.json();
+    });
+  }
+
+  function loadAll() {
+    if (!key) { showGate(); return; }
+    $("refreshBtn").disabled = true;
+    Promise.all([apiFetch("/api/admin/stats"), apiFetch("/api/admin/shares")]).then(function (res) {
+      state.stats = res[0];
+      state.shares = res[1].shares || [];
+      render();
+    }).catch(function (e) {
+      if (e.message !== "auth") $("gateErr").textContent = e.message || "Request failed.";
+    }).then(function () {
+      $("refreshBtn").disabled = false;
+    });
+  }
+
+  function drawChart() {
+    var c = $("chart"), g = c.getContext("2d");
+    g.clearRect(0, 0, c.width, c.height);
+    var days = (state.stats && state.stats.last_7_days) || [];
+    if (!days.length) return;
+    var max = Math.max.apply(null, days.map(function (d) { return d.count; })) || 1;
+    var W = c.width, H = c.height, pad = 10, base = H - 30,
+        barW = Math.min(50, (W - pad * 2 - 8 * (days.length - 1)) / days.length);
+    days.forEach(function (d, i) {
+      var h = Math.max(2, (d.count / max) * (base - pad));
+      var x = pad + i * (barW + 8) + (barW / 2 - 4);
+      var grad = g.createLinearGradient(0, base - h, 0, base);
+      grad.addColorStop(0, "#9f7aea"); grad.addColorStop(1, "#4c3a8f");
+      g.fillStyle = grad;
+      g.fillRect(x, base - h, 8, h);
+      g.fillStyle = "#b9b4d8"; g.font = "12px system-ui"; g.textAlign = "center";
+      g.fillText(d.count, x + 4, base - h - 7);
+      g.fillStyle = "#6b6890"; g.fillText(d.date.slice(5), x + 4, base + 14);
+    });
+  }
+
+  function render() {
+    var s = state.stats;
+    if (s) {
+      $("cTotal").textContent = s.shares_total;
+      $("cActive").textContent = s.shares_active;
+      $("cToday").textContent = s.shares_today;
+      $("cYest").textContent = s.shares_yesterday;
+      $("kBurn").textContent = s.burn_pct + "%";
+      $("kAvg").textContent = fmtBytes(s.avg_share_bytes);
+      $("k24h").textContent = s.shares_24h;
+      $("kBackend").textContent = s.backend === "supabase" ? "Supabase (Postgres)" : "Disk (SQLite)";
+      $("backendLabel").textContent = s.backend === "supabase" ? "supabase" : "sqlite";
+      drawChart();
+    }
+    renderRows();
+  }
+
+  function visibleShares() {
+    var q = state.q.toLowerCase();
+    return state.shares.filter(function (sh) {
+      if (state.fStatus === "active" && !sh.active) return false;
+      if (state.fStatus === "expired" && sh.active) return false;
+      if (state.fType !== "all") {
+        var t = shareType(sh);
+        if (!(state.fType === "mixed" ? t === "mixed" : t === state.fType)) return false;
+      }
+      if (q) {
+        var hay = sh.code + " " + (sh.items || []).map(function (i) { return i.name; }).join(" ");
+        if (hay.toLowerCase().indexOf(q) === -1) return false;
+      }
+      return true;
+    }).sort(function (a, b) {
+      if (state.sort === "size") return b.bytes_total - a.bytes_total;
+      if (state.sort === "sizeAsc") return a.bytes_total - b.bytes_total;
+      if (state.sort === "oldest") return a.created_at - b.created_at;
+      return b.created_at - a.created_at; /* newest first default */
+    });
+  }
+
+  function renderRows() {
+    var list = visibleShares();
+    $("countLabel").textContent = list.length + " shown · " + state.shares.length + " total";
+    var el = $("rows");
+    if (!list.length) {
+      el.innerHTML = '<div class="empty">No shares match.</div>';
+      return;
+    }
+    el.innerHTML = list.map(function (sh) {
+      var t = shareType(sh);
+      var tCls = t === "file" ? "type-file" : (t === "text" ? "type-text" : "type-mixed");
+      var tLabel = t === "mixed" ? "mixed" : t;
+      var names = (sh.items || []).map(function (i) { return i.name; });
+      var typeCount = (sh.items || []).filter(function (i) { return i.type === "file"; }).length;
+      var filesCell = '<span class="files">' + esc(names[0] || "—") +
+        (names.length > 1 ? '<span class="files"><small>+ ' + (names.length - 1) + ' more</small></span>' : "") +
+        "</span>";
+      return '<div class="row">' +
+        '<div class="cell status ' + (sh.active ? "on" : "off") + '" data-label="Status">' + (sh.active ? "Active" : "Expired") + "</div>" +
+        '<div class="cell code-cell" data-label="Code"><span class="code">' + esc(sh.code) + "</span></div>" +
+        '<div class="cell" data-label="Files">' + filesCell + (typeCount ? '<small>' + typeCount + ' file(s)</small>' : "") + "</div>" +
+        '<div class="cell" data-label="Size">' + fmtBytes(sh.bytes_total) + "</div>" +
+        '<div class="cell" data-label="Type"><span class="type-badge ' + tCls + '">' + tLabel + "</span></div>" +
+        '<div class="cell" data-label="Created">' + fmtDate(sh.created_at) + "</div>" +
+        '<div class="cell" data-label="Expires">' + (sh.active
+          ? fmtRel(sh.expires_in) + " left"
+          : '<span style="color:var(--rose)">' + fmtDate(sh.expires_at) + "</span>") + "</div>" +
+        '<div class="cell dl" data-label="Downloads">' + sh.downloads + "</div>" +
+        '<div class="cell" data-label="Burn">' + (sh.burn ? '<span class="burn">burn</span>' : "—") + "</div>" +
+        "</div>";
+    }).join("");
+  }
+
+  function showGate() {
+    $("dash").classList.add("hidden");
+    $("gate").classList.remove("hidden");
+    $("gateErr").textContent = "";
+    $("keyInput").focus();
+  }
+
+  function unlock() {
+    var v = $("keyInput").value.trim();
+    if (!v) { $("gateErr").textContent = "Enter the admin key."; return; }
+    key = v;
+    sessionStorage.setItem("adk", v);
+    $("gate").classList.add("hidden");
+    $("dash").classList.remove("hidden");
+    loadAll();
+  }
+
+  function changeKey() {
+    key = "";
+    sessionStorage.removeItem("adk");
+    showGate();
+  }
+
+  $("keyBtn").addEventListener("click", unlock);
+  $("keyInput").addEventListener("keydown", function (e) { if (e.key === "Enter") unlock(); });
+  $("keyChangeBtn").addEventListener("click", changeKey);
+  $("refreshBtn").addEventListener("click", loadAll);
+
+  $("q").addEventListener("input", function () { state.q = this.value; renderRows(); });
+  $("fStatus").addEventListener("change", function () { state.fStatus = this.value; renderRows(); });
+  $("fType").addEventListener("change", function () { state.fType = this.value; renderRows(); });
+  $("sort").addEventListener("change", function () { state.sort = this.value; renderRows(); });
+
+  setInterval(function () { if (key) loadAll(); }, 60000);
+
+  if (key) { $("gate").classList.add("hidden"); $("dash").classList.remove("hidden"); loadAll(); }
+})();
+</script>
+</body>
+</html>

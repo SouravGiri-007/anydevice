@@ -127,7 +127,7 @@ set the same variables in their dashboard instead; no `.env` file needed there.
 | `ANYDEVICE_ITEMS_MAX` | 50 | Max items per code |
 | `ANYDEVICE_LOOKUP_LIMIT` | 5/min/IP | Code-lookup rate limit (anti brute-force) |
 | `ANYDEVICE_TRUST_PROXY` | off | Use `X-Forwarded-For` for rate-limit keys |
-| `ANYDEVICE_ADMIN_KEY` | — | Enables `GET /api/admin/stats` (operator-only aggregate stats) |
+| `ANYDEVICE_ADMIN_KEY` | — | Enables the operator admin API (`GET /api/admin/stats` + `GET /api/admin/shares`) and the `/admin` dashboard. Never share or commit this. |
 | `SUPABASE_URL` | — | (supabase) project host |
 | `SUPABASE_SERVICE_ROLE_KEY` | — | (supabase) backend service key |
 | `SUPABASE_DATABASE_URL` | — | (supabase) Postgres pooler/direct URI |
@@ -138,11 +138,14 @@ set the same variables in their dashboard instead; no `.env` file needed there.
 | | |
 | --- | --- |
 | `GET /api/health` | machine health: `{ok, service, backend}` — `503` when the metadata store is unreachable |
-| `GET /api/admin/stats` | operator-only aggregate stats — needs `X-Admin-Key` header (see [ARCHITECTURE.md](ARCHITECTURE.md)); returns plain counts/averages only, never IPs/codes/filenames/content |
+| `GET /api/admin/stats` | operator-only aggregate stats — needs `X-Admin-Key` header; counts/averages only (total, 24h, active, today, yesterday, `last_7_days`), never IPs/codes/filenames/content |
+| `GET /api/admin/shares` | operator-only per-share detail feed for the dashboard — needs `X-Admin-Key` header; per-share code, item names/sizes, download counts, expiry/status, burn flag. No sender/receiver/IP/user data is stored or returned |
+| `GET /admin` | static admin dashboard page (public shell, no data). Key is entered client-side and every data request goes through the gate above |
 | `POST /api/share` | create a code + attach initial item(s) → `201 {code, items…}` |
 | `POST /api/share/<code>` | append item(s) to a live code → `200` |
 | `GET /api/share/<code>` | fetch share metadata + item list |
 | `GET /api/share/<code>/status` | lightweight pickup poll (never marks viewed) |
+| `GET /api/share/<code>/clipboard` | live text sync — returns decrypted inline text items for the receiver's poll; never flips status or affects burn |
 | `GET /api/share/<code>/download/<id>` | stream one item (`?inline=1` → preview) |
 | `GET /api/share/<code>/download-all` | zip + stream everything |
 
@@ -152,10 +155,28 @@ Text travels as JSON, files as `multipart/form-data` (`meta` JSON +
 ## Tests
 
 ```bash
-.venv/Scripts/python -m pytest backend/test_api.py -q       # 40 API tests
+.venv/Scripts/python -m pytest backend/test_api.py -q       # 44 API tests
 .venv/Scripts/python -m pytest backend/test_supabase.py -q  # 4 live Supabase tests (skip if env unset)
 cd frontend && npm run build                                # typecheck + production build
 ```
+
+## Monitoring
+
+The operator dashboard is a single self-contained page (`backend/static/admin.html`,
+served at `/admin`) — no build step, works anywhere:
+
+- **Locally**: set `ANYDEVICE_ADMIN_KEY` in `.env`, run `python -m backend.app`,
+  open `http://127.0.0.1:5000/admin`, and enter the key. Nothing is stored on
+  disk — the key lives in `sessionStorage` for the current tab only.
+- **On Render**: set `ANYDEVICE_ADMIN_KEY` in the Environment tab, open
+  `https://<your-service>.onrender.com/admin`, and enter the key.
+- **API-only**: `curl -H "X-Admin-Key: $ANYDEVICE_ADMIN_KEY" https://<host>/api/admin/stats`
+
+The page shows aggregate cards (total / active / today / yesterday), a 7-day bar
+chart, burn %, average share size, backend mode, and a searchable/sortable table
+of individual shares. Auto-refreshes every 60s. Only the operator key can reach
+the two `/api/admin/*` endpoints — the page shell itself is public but useless
+without the key.
 
 ## Deploying
 

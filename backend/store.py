@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import sqlite3
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -250,9 +251,12 @@ class SQLiteStore:
 
         Pure counts/averages over the whole store — no codes, names, filenames,
         IPs, or content ever leave this method. Matches the no-tracking stance.
+        Daily breakdown is calendar-based in UTC: ``shares_today`` /
+        ``shares_yesterday`` and ``last_7_days`` (oldest first, zero-filled).
         """
         now = time.time() if now is None else now
         day_ago = now - 86400
+        day_start = int(now) - (int(now) % 86400)
         with self._lock:
             total = self._conn.execute("SELECT COUNT(*) FROM shares").fetchone()[0]
             recent = self._conn.execute(
@@ -267,11 +271,75 @@ class SQLiteStore:
             avg_row = self._conn.execute(
                 "SELECT AVG(sz) FROM (SELECT SUM(size) AS sz FROM items GROUP BY code)"
             ).fetchone()
+            daily = self._conn.execute(
+                "SELECT date(created_at, 'unixepoch') AS d, COUNT(*) AS n "
+                "FROM shares WHERE created_at >= ? GROUP BY d",
+                (day_start - 6 * 86400,),
+            ).fetchall()
         avg = avg_row[0] if avg_row and avg_row[0] is not None else 0
+        today = datetime.fromtimestamp(day_start, tz=timezone.utc).date()
+        counts = {r["d"]: int(r["n"]) for r in daily}
+        last7 = []
+        for i in range(6, -1, -1):
+            key = (today - timedelta(days=i)).isoformat()
+            last7.append({"date": key, "count": counts.get(key, 0)})
         return {
             "shares_total": total,
             "shares_24h": recent,
             "shares_active": active,
             "burn_pct": round(100.0 * burn / total, 1) if total else 0.0,
             "avg_share_bytes": round(float(avg), 1),
+            "shares_today": last7[-1]["count"],
+            "shares_yesterday": last7[-2]["count"],
+            "last_7_days": last7,
         }
+
+    def admin_shares(self, now: float | None = None) -> list[dict[str, Any]]:
+        """Per-share detail for the private admin dashboard.
+
+        Intentionally admin-only: exposes transfer codes, item names, sizes and
+        download counts. The system never stores sender/receiver identities, IPs
+        or device info, so none of that is ever returned. Burned shares that were
+        purged are already deleted and therefore absent here.
+        """
+        now = time.time() if now is None else now
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT s.code AS code, s.created_at AS created_at, "
+                "s.expires_at AS expires_at, s.burn AS burn, s.status AS status, "
+                "i.name AS name, i.type AS type, i.size AS size, "
+                "i.downloaded AS downloaded "
+                "FROM shares s LEFT JOIN items i ON i.code = s.code "
+                "ORDER BY s.created_at DESC"
+            ).fetchall()
+        by_code: dict[str, dict[str, Any]] = {}
+        for r in rows:
+            share = by_code.setdefault(
+                r["code"],
+                {
+                    "code": r["code"],
+                    "created_at": r["created_at"],
+                    "expires_at": r["expires_at"],
+                    "burn": bool(r["burn"]),
+                    "status": r["status"],
+                    "bytes_total": 0,
+                    "downloads": 0,
+                    "items": [],
+                },
+            )
+            if r["name"] is not None:
+                share["items"].append(
+                    {
+                        "name": r["name"],
+                        "type": r["type"],
+                        "size": r["size"],
+                        "downloaded": bool(r["downloaded"]),
+                    }
+                )
+                share["bytes_total"] += r["size"]
+                if r["downloaded"]:
+                    share["downloads"] += 1
+        for share in by_code.values():
+            share["active"] = share["expires_at"] > now
+            share["expires_in"] = max(0.0, share["expires_at"] - now)
+        return list(by_code.values())

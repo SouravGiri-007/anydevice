@@ -4,6 +4,7 @@ from __future__ import annotations
 import io
 import json
 import zipfile
+from datetime import datetime, timezone
 
 import pytest
 
@@ -381,10 +382,31 @@ def test_admin_stats_aggregates_pii_free(tmp_path):
     assert body["shares_active"] == 2
     assert body["burn_pct"] == 33.3
     assert body["avg_share_bytes"] == 9.0
+    # Daily breakdown (calendar-based, UTC): all three created "now".
+    today = datetime.now(timezone.utc).date().isoformat()
+    assert body["shares_today"] == 3
+    assert body["shares_yesterday"] == 0
+    last7 = body["last_7_days"]
+    assert len(last7) == 7
+    assert last7[-1] == {"date": today, "count": 3}
+    assert sum(d["count"] for d in last7) == 3
     # No PII / content-identifying data anywhere in the payload.
     payload = json.dumps(body)
     for banned in ("a.txt", "b.txt", "c.bin", "hello", "0123456789"):
         assert banned not in payload
+
+
+def test_admin_page_serves_standalone_dashboard(client):
+    # Static shell is public (browsers can't send X-Admin-Key) but contains no data.
+    r = client.get("/admin")
+    assert r.status_code == 200
+    assert r.mimetype == "text/html"
+    text = r.get_data(as_text=True)
+    assert "AnyDevice" in text
+    assert "/api/admin/stats" in text
+    assert "/api/admin/shares" in text
+    assert 'type="password"' in text
+    assert client.get("/admin").status_code == 200
 
 
 def test_admin_stats_rate_limited(tmp_path):
@@ -394,6 +416,70 @@ def test_admin_stats_rate_limited(tmp_path):
     assert (
         client.get("/api/admin/stats", headers={"X-Admin-Key": "hk-secret"}).status_code == 429
     )
+
+
+def test_admin_shares_requires_key(tmp_path):
+    client, _ = _admin_app(tmp_path, admin_key="hk-secret")
+    assert client.get("/api/admin/shares").status_code == 401
+    assert client.get("/api/admin/shares", headers={"X-Admin-Key": "wrong"}).status_code == 401
+    r = client.get("/api/admin/shares", headers={"X-Admin-Key": "hk-secret"})
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["ok"] is True
+    assert body["shares"] == []
+
+
+def test_admin_shares_lists_active_and_expired(tmp_path):
+    client, app = _admin_app(tmp_path, admin_key="hk-secret")
+    code = _make_share(client).get_json()["code"]
+    body = client.get("/api/admin/shares", headers={"X-Admin-Key": "hk-secret"}).get_json()
+    assert body["count"] == 1
+    sh = body["shares"][0]
+    assert sh["code"] == code
+    assert sh["status"] == "pending"
+    assert sh["burn"] is False
+    assert sh["active"] is True
+    assert sh["bytes_total"] == len(TEXT_ITEMS[0]["content"].encode())
+    assert sh["downloads"] == 0
+    assert sh["items"] == [
+        {"name": "hello.py", "type": "text", "size": len(TEXT_ITEMS[0]["content"].encode()),
+         "downloaded": False}
+    ]
+    _force_expiry(app, code)
+    body2 = client.get("/api/admin/shares", headers={"X-Admin-Key": "hk-secret"}).get_json()
+    assert body2["shares"][0]["active"] is False
+    assert body2["shares"][0]["expires_in"] == 0
+
+
+def test_admin_shares_tracks_downloads_and_burn(tmp_path):
+    client, _ = _admin_app(tmp_path, admin_key="hk-secret")
+    _make_share(client, items=[{"type": "text", "name": "note", "content": "hello world"}])
+    r = _upload_file(client, "pic.png", b"\x89PNG fake image bytes", burn=True)
+    j = r.get_json()
+    code, item = j["code"], j["items"][0]
+    # Downloading a burn share's last file self-destructs it.
+    assert client.get(f"/api/share/{code}/download/{item['id']}").status_code == 200
+
+    body = client.get("/api/admin/shares", headers={"X-Admin-Key": "hk-secret"}).get_json()
+    assert body["count"] == 1  # burned share is gone, text share remains
+    sh = body["shares"][0]
+    assert sh["items"][0]["name"] == "note"
+    assert sh["downloads"] == 0
+
+    # Re-create a burn file share but don't finish downloading: still listed.
+    r2 = _upload_file(client, "keep.png", b"still here", burn=True)
+    j2 = r2.get_json()
+    code2, item2 = j2["code"], j2["items"][0]
+    body2 = client.get("/api/admin/shares", headers={"X-Admin-Key": "hk-secret"}).get_json()
+    burn_s = next(s for s in body2["shares"] if s["code"] == code2)
+    assert burn_s["burn"] is True
+    assert burn_s["downloads"] == 0
+    assert burn_s["bytes_total"] == len(b"still here")
+    assert burn_s["active"] is True
+    # Download the file → downloads count and the share disappears.
+    assert client.get(f"/api/share/{code2}/download/{item2['id']}").status_code == 200
+    body3 = client.get("/api/admin/shares", headers={"X-Admin-Key": "hk-secret"}).get_json()
+    assert all(s["code"] != code2 for s in body3["shares"])
 
 
 # -- server-managed at-rest encryption ----------------------------------------
