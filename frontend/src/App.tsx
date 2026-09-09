@@ -3,6 +3,7 @@ import AttachPanel from "./components/AttachPanel";
 import CodeBox from "./components/CodeBox";
 import GrabPanel from "./components/GrabPanel";
 import GithubBadge from "./components/GithubBadge";
+import { StarIcon } from "./components/icons";
 import ItemsList from "./components/ItemsList";
 import Portal from "./components/Portal";
 import RecentCodes from "./components/RecentCodes";
@@ -304,6 +305,21 @@ export default function App() {
       <footer className="flex flex-col items-center gap-4 border-t border-edge/50 py-6">
         <p className="text-xs text-mute/80">AnyDevice · drop it here, receive it anywhere</p>
         <GithubBadge />
+        <a
+          href="https://github.com/SouravGiri-007/anydevice"
+          target="_blank"
+          rel="noreferrer noopener"
+          className="star-cta"
+        >
+          <span className="star-cta-inner">
+            <span className="star-cta-icon">
+              <StarIcon />
+            </span>
+            <span className="star-cta-text">
+              Like AnyDevice? <strong>Star it on GitHub</strong>
+            </span>
+          </span>
+        </a>
       </footer>
 
       {toast && <Toast toast={toast} />}
