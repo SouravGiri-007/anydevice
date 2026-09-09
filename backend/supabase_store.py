@@ -8,7 +8,9 @@ flask app is the only client that touches these tables.
 """
 from __future__ import annotations
 
+import json
 import time
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -25,7 +27,10 @@ CREATE TABLE IF NOT EXISTS shares (
     burn       BOOLEAN NOT NULL DEFAULT FALSE,
     status     TEXT NOT NULL DEFAULT 'pending',  -- pending | viewed
     enc        BOOLEAN NOT NULL DEFAULT FALSE,   -- 1 = client-side encrypted content
-    key        TEXT                               -- server at-rest AES key (base64url)
+    key        TEXT,                              -- server at-rest AES key (base64url)
+    creator_ip TEXT,                              -- operator history: creator's IP
+    picked_at  DOUBLE PRECISION,                  -- first receiver pickup (view) time
+    picked_ip  TEXT                               -- receiver's IP at first pickup
 );
 CREATE TABLE IF NOT EXISTS items (
     id         TEXT PRIMARY KEY,
@@ -41,6 +46,31 @@ CREATE TABLE IF NOT EXISTS items (
 );
 CREATE INDEX IF NOT EXISTS idx_items_code ON items(code);
 CREATE INDEX IF NOT EXISTS idx_shares_expires ON shares(expires_at);
+CREATE TABLE IF NOT EXISTS download_log (
+    id        TEXT PRIMARY KEY,
+    code      TEXT NOT NULL REFERENCES shares(code) ON DELETE CASCADE,
+    item_id   TEXT,
+    item_name TEXT NOT NULL,
+    ip        TEXT,
+    at        DOUBLE PRECISION NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_dlog_code ON download_log(code);
+CREATE TABLE IF NOT EXISTS share_history (
+    code         TEXT PRIMARY KEY,
+    created_at   DOUBLE PRECISION NOT NULL,
+    expires_at   DOUBLE PRECISION NOT NULL,
+    ended_at     DOUBLE PRECISION NOT NULL,
+    ended_reason TEXT NOT NULL,            -- 'expired' | 'burned'
+    burn         BOOLEAN NOT NULL DEFAULT FALSE,
+    downloads    BIGINT NOT NULL DEFAULT 0,
+    bytes_total  BIGINT NOT NULL DEFAULT 0,
+    items        TEXT NOT NULL,            -- JSON [{name,type,size}] — metadata only
+    creator_ip   TEXT,
+    picked_at    DOUBLE PRECISION,
+    picked_ip    TEXT,
+    download_log TEXT NOT NULL DEFAULT '[]'  -- JSON [{item_name,ip,at}] — receiver audit
+);
+CREATE INDEX IF NOT EXISTS idx_history_ended ON share_history(ended_at);
 """
 
 
@@ -53,6 +83,13 @@ class SupabaseStore:
         self._dsn = dsn
         with self._conn() as conn:
             conn.execute(_SCHEMA)
+            # Forward-migrate stores created before the receiver-tracking feature.
+            conn.execute("ALTER TABLE shares ADD COLUMN IF NOT EXISTS creator_ip TEXT")
+            conn.execute("ALTER TABLE shares ADD COLUMN IF NOT EXISTS picked_at DOUBLE PRECISION")
+            conn.execute("ALTER TABLE shares ADD COLUMN IF NOT EXISTS picked_ip TEXT")
+            conn.execute("ALTER TABLE share_history ADD COLUMN IF NOT EXISTS picked_at DOUBLE PRECISION")
+            conn.execute("ALTER TABLE share_history ADD COLUMN IF NOT EXISTS picked_ip TEXT")
+            conn.execute("ALTER TABLE share_history ADD COLUMN IF NOT EXISTS download_log TEXT NOT NULL DEFAULT '[]'")
 
     def _conn(self) -> psycopg.Connection:
         return psycopg.connect(self._dsn, row_factory=dict_row, autocommit=False)
@@ -68,14 +105,15 @@ class SupabaseStore:
         items: list[dict[str, Any]],
         enc: bool = False,
         key: str | None = None,
+        creator_ip: str | None = None,
         now: float | None = None,
     ) -> dict[str, Any]:
         now = time.time() if now is None else now
         with self._conn() as conn:
             conn.execute(
-                "INSERT INTO shares (code, ttl_key, ttl_seconds, created_at, expires_at, burn, enc, key) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-                (code, ttl_key, ttl_seconds, now, now + ttl_seconds, bool(burn), bool(enc), key),
+                "INSERT INTO shares (code, ttl_key, ttl_seconds, created_at, expires_at, burn, enc, key, creator_ip) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                (code, ttl_key, ttl_seconds, now, now + ttl_seconds, bool(burn), bool(enc), key, creator_ip),
             )
             self._insert_items(conn, code, items)
         return self.get(code)
@@ -137,6 +175,9 @@ class SupabaseStore:
                 "status": row["status"],
                 "enc": bool(row["enc"]),
                 "key": row["key"],
+                "creator_ip": row["creator_ip"],
+                "picked_at": row["picked_at"],
+                "picked_ip": row["picked_ip"],
             }
             item_rows = conn.execute(
                 "SELECT * FROM items WHERE code = %s ORDER BY pos ASC", (code,)
@@ -174,12 +215,18 @@ class SupabaseStore:
 
     # -- pickup status ------------------------------------------------------
 
-    def set_viewed(self, code: str) -> bool:
-        """Flip pending → viewed. Returns True if the state actually changed."""
+    def set_viewed(self, code: str, ip: str | None = None, now: float | None = None) -> bool:
+        """Flip pending → viewed (first receiver pickup). Returns True on change.
+
+        Records the receiver's IP + timestamp on the first pickup only — later
+        polls never overwrite it (privacy-sensitive, so captured once).
+        """
+        now = time.time() if now is None else now
         with self._conn() as conn:
             cur = conn.execute(
-                "UPDATE shares SET status = 'viewed' WHERE code = %s AND status = 'pending'",
-                (code,),
+                "UPDATE shares SET status = 'viewed', picked_at = %s, picked_ip = %s "
+                "WHERE code = %s AND status = 'pending'",
+                (now, ip, code),
             )
             return cur.rowcount > 0
 
@@ -208,6 +255,23 @@ class SupabaseStore:
         with self._conn() as conn:
             conn.execute("UPDATE items SET downloaded = TRUE WHERE code = %s", (code,))
 
+    def log_download(
+        self,
+        code: str,
+        item_id: str,
+        item_name: str,
+        ip: str | None = None,
+        now: float | None = None,
+    ) -> None:
+        """Append a receiver download event to the admin-only audit log."""
+        now = time.time() if now is None else now
+        with self._conn() as conn:
+            conn.execute(
+                "INSERT INTO download_log (id, code, item_id, item_name, ip, at) "
+                "VALUES (%s, %s, %s, %s, %s, %s)",
+                (str(uuid.uuid4()), code, item_id, item_name, ip, now),
+            )
+
     # -- expiry / deletion --------------------------------------------------
 
     def expired_codes(self, now: float | None = None) -> list[str]:
@@ -226,10 +290,101 @@ class SupabaseStore:
         with self._conn() as conn:
             conn.execute("DELETE FROM items")
             conn.execute("DELETE FROM shares")
+            conn.execute("DELETE FROM share_history")
 
     def count(self) -> int:
         with self._conn() as conn:
             return conn.execute("SELECT COUNT(*) AS n FROM shares").fetchone()["n"]
+
+    # -- persistent share history -------------------------------------------
+
+    def finalize(self, code: str, ended_reason: str, now: float | None = None) -> bool:
+        """End a share's life: snapshot it to history and delete its metadata.
+
+        See ``SQLiteStore.finalize`` — same contract, Postgres dialect. The
+        ``ON CONFLICT (code) DO NOTHING`` makes retries/cleanup idempotent.
+        """
+        now = time.time() if now is None else now
+        with self._conn() as conn:
+            srow = conn.execute(
+                "SELECT * FROM shares WHERE code = %s", (code,)
+            ).fetchone()
+            if srow is None:
+                return False
+            items = conn.execute(
+                "SELECT name, type, size, downloaded FROM items "
+                "WHERE code = %s ORDER BY pos ASC",
+                (code,),
+            ).fetchall()
+            dl_rows = conn.execute(
+                "SELECT item_name AS item_name, ip AS ip, at AS at FROM download_log "
+                "WHERE code = %s ORDER BY at ASC",
+                (code,),
+            ).fetchall()
+            downloads = sum(1 for it in items if it["downloaded"])
+            bytes_total = sum(int(it["size"]) for it in items)
+            item_meta = [
+                {"name": it["name"], "type": it["type"], "size": int(it["size"])}
+                for it in items
+            ]
+            dl_meta = [
+                {"item": r["item_name"], "ip": r["ip"], "at": float(r["at"])}
+                for r in dl_rows
+            ]
+            conn.execute(
+                "INSERT INTO share_history "
+                "(code, created_at, expires_at, ended_at, ended_reason, burn, "
+                "downloads, bytes_total, items, creator_ip, picked_at, picked_ip, download_log) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                "ON CONFLICT (code) DO NOTHING",
+                (
+                    code,
+                    float(srow["created_at"]),
+                    float(srow["expires_at"]),
+                    now,
+                    ended_reason,
+                    bool(srow["burn"]),
+                    downloads,
+                    bytes_total,
+                    json.dumps(item_meta),
+                    srow["creator_ip"],
+                    srow["picked_at"],
+                    srow["picked_ip"],
+                    json.dumps(dl_meta),
+                ),
+            )
+            conn.execute("DELETE FROM shares WHERE code = %s", (code,))
+        return True
+
+    def history(self, now: float | None = None) -> list[dict[str, Any]]:
+        """All historical entries, newest-ended first. Metadata only."""
+        del now  # kept for signature symmetry with other store
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT code, created_at, expires_at, ended_at, ended_reason, burn, "
+                "downloads, bytes_total, items, creator_ip, picked_at, picked_ip, download_log "
+                "FROM share_history ORDER BY ended_at DESC"
+            ).fetchall()
+        out: list[dict[str, Any]] = []
+        for r in rows:
+            out.append(
+                {
+                    "code": r["code"],
+                    "created_at": float(r["created_at"]),
+                    "expires_at": float(r["expires_at"]),
+                    "ended_at": float(r["ended_at"]),
+                    "status": r["ended_reason"],
+                    "burn": bool(r["burn"]),
+                    "downloads": int(r["downloads"]),
+                    "bytes_total": int(r["bytes_total"]),
+                    "items": json.loads(r["items"]),
+                    "creator_ip": r["creator_ip"],
+                    "picked_at": r["picked_at"],
+                    "picked_ip": r["picked_ip"],
+                    "download_log": json.loads(r["download_log"]),
+                }
+            )
+        return out
 
     def heartbeat(self) -> None:
         """Tiny read that keeps the Supabase free project awake."""
@@ -294,11 +449,21 @@ class SupabaseStore:
             rows = conn.execute(
                 "SELECT s.code AS code, s.created_at AS created_at, "
                 "s.expires_at AS expires_at, s.burn AS burn, s.status AS status, "
+                "s.picked_at AS picked_at, s.picked_ip AS picked_ip, "
                 "i.name AS name, i.type AS type, i.size AS size, "
                 "i.downloaded AS downloaded "
                 "FROM shares s LEFT JOIN items i ON i.code = s.code "
                 "ORDER BY s.created_at DESC"
             ).fetchall()
+            dl_rows = conn.execute(
+                "SELECT code AS code, item_name AS item_name, ip AS ip, at AS at "
+                "FROM download_log ORDER BY at ASC"
+            ).fetchall()
+        dl_by_code: dict[str, list[dict[str, Any]]] = {}
+        for r in dl_rows:
+            dl_by_code.setdefault(r["code"], []).append(
+                {"item": r["item_name"], "ip": r["ip"], "at": float(r["at"])}
+            )
         by_code: dict[str, dict[str, Any]] = {}
         for r in rows:
             share = by_code.setdefault(
@@ -309,6 +474,8 @@ class SupabaseStore:
                     "expires_at": float(r["expires_at"]),
                     "burn": bool(r["burn"]),
                     "status": r["status"],
+                    "picked_at": r["picked_at"],
+                    "picked_ip": r["picked_ip"],
                     "bytes_total": 0,
                     "downloads": 0,
                     "items": [],
@@ -327,6 +494,7 @@ class SupabaseStore:
                 if r["downloaded"]:
                     share["downloads"] += 1
         for share in by_code.values():
+            share["download_log"] = dl_by_code.get(share["code"], [])
             share["active"] = share["expires_at"] > now
             share["expires_in"] = max(0.0, share["expires_at"] - now)
         return list(by_code.values())
