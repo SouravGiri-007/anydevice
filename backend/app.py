@@ -4,6 +4,8 @@ Endpoints (per PRD section 9):
   POST /api/share                       create a code + attach initial item(s)
   POST /api/share/<code>                append item(s) to an existing share
   GET  /api/share/<code>                fetch metadata + item list
+  GET  /api/share/<code>/status         sender's cheap pickup poll
+  GET  /api/share/<code>/clipboard      receiver's live text sync (inline content)
   GET  /api/share/<code>/download/<id>  stream one item
   GET  /api/share/<code>/download-all   zip + stream everything
 
@@ -513,6 +515,20 @@ def create_app(cfg: Config | None = None) -> Flask:
                 "expires_in": max(0.0, share["expires_at"] - time.time()),
             }
         )
+
+    @app.get("/api/share/<code_raw>/clipboard")
+    def share_clipboard(code_raw: str):
+        """Live clipboard sync for the receiving device.
+
+        Returns every text item inline (server-decrypted plaintext) so the grab
+        side can surface pasted text without a download click. Same cheap poll
+        bucket as /status — never flips status, never marks anything downloaded,
+        and never affects burn. New pastes arrive simply by polling again."""
+        rate_limit("poll", cfg.poll_limit)
+        share = fetch_live_share(code_raw)
+        key = share.get("key")
+        items = [_item_json(i, key) for i in share["items"] if i["type"] == "text"]
+        return jsonify({"code": share["code"], "items": items})
 
     # -- append -------------------------------------------------------------
 

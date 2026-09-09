@@ -268,6 +268,69 @@ def test_status_polls_bypass_lookup_rate_limit(tmp_path):
         assert client.get(f"/api/share/{code}/status").status_code == 200
 
 
+# -- live clipboard sync (receiver's text poll) -----------------------------
+
+
+def test_clipboard_returns_text_inline(client):
+    code = _make_share(client).get_json()["code"]
+    r = client.get(f"/api/share/{code}/clipboard")
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["code"] == code
+    assert [i["type"] for i in body["items"]] == ["text"]
+    assert body["items"][0]["content"] == 'print("hello from device A")\n'
+
+
+def test_clipboard_ignores_files_and_adds_new_text(client):
+    r = _make_share(
+        client,
+        items=[
+            {"type": "text", "name": "greet.txt", "content": "hi"},
+            {"type": "text", "name": "note.txt", "content": "hello"},
+        ],
+    )
+    assert r.status_code == 201
+    code = r.get_json()["code"]
+    # Append a file — should not appear in clipboard.
+    client.post(
+        f"/api/share/{code}",
+        data={
+            "meta": json.dumps({"ttl": "1h"}),
+            "clip.txt": (io.BytesIO(b"binary blob"), "clip.txt"),
+        },
+        content_type="multipart/form-data",
+    )
+    # Append a text item — should appear in clipboard.
+    client.post(
+        f"/api/share/{code}",
+        data={
+            "meta": json.dumps({"ttl": "1h"}),
+            "text_items": json.dumps(
+                [{"type": "text", "name": "clip.txt", "content": "copied on device B"}]
+            ),
+        },
+        content_type="multipart/form-data",
+    )
+    items = client.get(f"/api/share/{code}/clipboard").get_json()["items"]
+    assert [i["content"] for i in items] == ["hi", "hello", "copied on device B"]
+
+
+def test_clipboard_is_readonly_and_never_flips_status(client):
+    code = _make_share(client, burn=True).get_json()["code"]
+    # Polling repeatedly neither marks viewed nor downloads items.
+    assert client.get(f"/api/share/{code}/clipboard").status_code == 200
+    assert client.get(f"/api/share/{code}/clipboard").status_code == 200
+    data = client.get(f"/api/share/{code}").get_json()
+    assert data["status"] == "pending"
+    assert all(not i["downloaded"] for i in data["items"])
+
+
+def test_clipboard_404_when_expired(client):
+    code = _make_share(client).get_json()["code"]
+    _force_expiry(client.application, code)
+    assert client.get(f"/api/share/{code}/clipboard").status_code == 404
+
+
 # -- server-managed at-rest encryption ----------------------------------------
 
 

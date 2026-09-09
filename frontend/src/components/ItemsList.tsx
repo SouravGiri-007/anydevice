@@ -120,6 +120,7 @@ function Row({
   // Downloading this item completes the set → a burn-share self-destructs.
   const willBurn = share.burn && share.items.every((i) => i.id === item.id || i.downloaded);
   const canPreview = previewable(item);
+  const isText = item.type === "text";
 
   return (
     <li className="overflow-hidden rounded-2xl border border-edge bg-panel2/50">
@@ -131,10 +132,10 @@ function Row({
         </span>
         <button
           type="button"
-          onClick={() => canPreview && setOpen(!open)}
-          disabled={!canPreview}
+          onClick={() => !isText && canPreview && setOpen(!open)}
+          disabled={!canPreview || isText}
           className={`min-w-0 flex-1 text-left ${canPreview ? "cursor-pointer" : "cursor-default"}`}
-          title={canPreview ? (open ? "collapse" : "preview") : undefined}
+          title={isText ? undefined : canPreview ? (open ? "collapse" : "preview") : undefined}
         >
           <span className="block truncate text-sm font-semibold text-ink">{item.name}</span>
           <span className="block text-xs text-mute">
@@ -157,27 +158,31 @@ function Row({
         </div>
       </div>
 
-      {open && (
-        <div className="fade-up px-4 pb-4">
-          {item.type === "text" ? (
-            <TextPreview item={item} text={item.content ?? ""} />
-          ) : isImage(item.mime, item.name) ? (
-            <a href={fileUrl} target="_blank" rel="noreferrer">
-              <img src={fileUrl} alt={item.name} className="max-h-[420px] rounded-xl border border-edge object-contain" />
-            </a>
-          ) : isPdf(item.mime, item.name) ? (
-            <div>
-              <iframe src={fileUrl} title={item.name} className="h-[460px] w-full rounded-xl border border-edge bg-panel2/60" />
-              <button onClick={onDownload} className="mt-2 text-xs text-violets hover:underline">
-                download instead ↗
-              </button>
-            </div>
-          ) : (
-            <button onClick={onDownload} className="text-xs text-violets hover:underline">
-              download this file
-            </button>
-          )}
+      {isText ? (
+        <div className="px-4 pb-4">
+          <TextPreview item={item} text={item.content ?? ""} />
         </div>
+      ) : (
+        (open && (
+          <div className="fade-up px-4 pb-4">
+            {isImage(item.mime, item.name) ? (
+              <a href={fileUrl} target="_blank" rel="noreferrer">
+                <img src={fileUrl} alt={item.name} className="max-h-[420px] rounded-xl border border-edge object-contain" />
+              </a>
+            ) : isPdf(item.mime, item.name) ? (
+              <div>
+                <iframe src={fileUrl} title={item.name} className="h-[460px] w-full rounded-xl border border-edge bg-panel2/60" />
+                <button onClick={onDownload} className="mt-2 text-xs text-violets hover:underline">
+                  download instead ↗
+                </button>
+              </div>
+            ) : (
+              <button onClick={onDownload} className="text-xs text-violets hover:underline">
+                download this file
+              </button>
+            )}
+          </div>
+        ))
       )}
     </li>
   );

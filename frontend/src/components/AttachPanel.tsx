@@ -110,7 +110,13 @@ export default function AttachPanel({
             <textarea
               value={snippet}
               onChange={(e) => setSnippet(e.target.value)}
-              placeholder="Paste notes, code, a config…"
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  sendSnippet();
+                }
+              }}
+              placeholder="Paste notes, code, a config… (enter sends)"
               rows={3}
               autoFocus
               className="w-full resize-y rounded-lg bg-transparent text-sm text-ink placeholder:text-mute/70 focus:outline-none"
@@ -227,7 +233,13 @@ export default function AttachPanel({
           <textarea
             value={snippet}
             onChange={(e) => setSnippet(e.target.value)}
-            placeholder="Paste text or code…"
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                sendSnippet();
+              }
+            }}
+            placeholder="Paste text or code… (enter sends)"
             rows={3}
             className="w-full resize-y rounded bg-transparent text-sm text-ink placeholder:text-mute/70 focus:outline-none"
           />

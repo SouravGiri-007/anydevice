@@ -12,6 +12,7 @@ import {
   ApiError,
   appendShare,
   createShare,
+  fetchClipboard,
   fetchShare,
   fetchShareStatus,
   type Share,
@@ -119,6 +120,48 @@ export default function App() {
           );
           notify(`Code ${s.data.code} was picked up ✓`, "ok");
         }
+      } catch (e) {
+        if (stopped) return;
+        if (e instanceof ApiError && (e.errCode === "not_found" || e.errCode === "expired")) {
+          setShare(null);
+          notify(`Code ${s.data.code} closed — poof.`, "ok");
+        }
+      }
+    };
+    tick();
+    const id = window.setInterval(tick, 2000);
+    return () => {
+      stopped = true;
+      window.clearInterval(id);
+    };
+  }, [share, notify]);
+
+  // Live clipboard sync: while receiving, poll the clipboard endpoint so new
+  // text pastes from the paired device show up inline without a refresh.
+  useEffect(() => {
+    const s = share;
+    if (!s || s.mode !== "theirs") return;
+    let stopped = false;
+    const tick = async () => {
+      try {
+        const clip = await fetchClipboard(s.data.code);
+        if (stopped) return;
+        const texts = clip.items.filter((i) => i.type === "text");
+        setShare((prev) => {
+          if (!prev || prev.data.code !== s.data.code) return prev;
+          const known = new Set(prev.data.items.map((i) => i.id));
+          const fresh = texts.filter((i) => !known.has(i.id));
+          if (!fresh.length) return prev;
+          const items = [...prev.data.items, ...fresh];
+          return {
+            ...prev,
+            data: {
+              ...prev.data,
+              items,
+              bytes_total: items.reduce((total, i) => total + (i.size || 0), 0),
+            },
+          };
+        });
       } catch (e) {
         if (stopped) return;
         if (e instanceof ApiError && (e.errCode === "not_found" || e.errCode === "expired")) {

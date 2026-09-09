@@ -31,6 +31,11 @@ export interface ShareStatusResponse {
   expires_in: number;
 }
 
+export interface ClipboardResponse {
+  code: string;
+  items: ShareItem[];
+}
+
 export interface Snippet {
   name: string;
   content: string;
@@ -135,6 +140,11 @@ export function fetchShare(code: string, markViewed = true): Promise<Share> {
 /** Lightweight, unmarked poll for the sender's "waiting for pickup" state. */
 export function fetchShareStatus(code: string): Promise<ShareStatusResponse> {
   return request(`/share/${code}/status`);
+}
+
+/** Live clipboard sync: all text items inline for the receiving device. */
+export function fetchClipboard(code: string): Promise<ClipboardResponse> {
+  return request(`/share/${code}/clipboard`);
 }
 
 export function itemUrl(code: string, itemId: string, inline = false): string {
