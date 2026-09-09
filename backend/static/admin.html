@@ -79,7 +79,7 @@
   /* rows (desktop grid table) */
   .rows-head,.row{
     display:grid; gap:10px; align-items:center;
-    grid-template-columns:74px 100px 1fr 80px 74px 150px 130px 70px 46px;
+    grid-template-columns:74px 100px 1fr 74px 62px 132px 118px 52px 42px 130px;
   }
   .rows-head{
     color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.6px;
@@ -128,6 +128,45 @@
   }
   .gate-card .err{color:var(--rose); font-size:12px; min-height:16px; margin-top:10px}
   .gate-card .hint{color:var(--dim); font-size:11px; margin-top:12px}
+
+  /* history rows (10-column desktop grid) */
+  .hrow,.hhead{display:grid; gap:10px; align-items:center;
+    grid-template-columns:84px 76px 1fr 62px 54px 132px 116px 44px 40px 108px;
+  }
+  .hhead{
+    color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.6px;
+    padding:0 14px 8px;
+  }
+  .hrow{
+    background:var(--panel); border:1px solid var(--line); border-radius:11px;
+    padding:10px 14px; font-size:13px;
+  }
+  .hrow:hover{border-color:#33305c}
+  .st-exp{display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:600; color:var(--amber)}
+  .st-exp::before{content:""; width:7px; height:7px; border-radius:50%; background:var(--amber); box-shadow:0 0 7px rgba(251,191,36,.5)}
+  .st-burn{display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:600; color:var(--rose)}
+  .st-burn::before{content:""; width:7px; height:7px; border-radius:50%; background:var(--rose)}
+  .ip{font-family:ui-monospace,Consolas,monospace; color:var(--muted); font-size:12px}
+
+  /* expandable receiver-audit rows */
+  details.drow summary{list-style:none; cursor:pointer}
+  details.drow summary::-webkit-details-marker{display:none}
+  details.drow[open] summary{border-color:#3b3670}
+  .dlog{padding:10px 14px 4px; border-top:1px dashed var(--line); margin-top:8px; font-size:12px; color:var(--muted)}
+  .dlog .dhead{color:var(--dim); text-transform:uppercase; font-size:10.5px; letter-spacing:.5px; margin-bottom:6px}
+  .dlog .dline{display:flex; gap:12px; flex-wrap:wrap; justify-content:space-between; padding:4px 0; border-bottom:1px solid rgba(36,36,58,.6)}
+  .dlog .dline:last-child{border-bottom:none}
+  .dlog .muted{color:var(--dim)}
+
+  /* mobile cards for history */
+  @media (max-width:760px){
+    .hhead{display:none}
+    .hrow{
+      grid-template-columns:1fr 1fr; gap:8px 12px; padding:14px;
+    }
+    .hrow .cell::before{content:attr(data-label) ": "; color:var(--dim); font-size:11px; display:block; margin-bottom:2px}
+    .hrow .cell.st-exp,.hrow .cell.st-burn{border-bottom:1px solid var(--line); padding-bottom:9px; margin-bottom:2px}
+  }
 
   footer{margin-top:34px; color:var(--dim); font-size:11.5px; line-height:1.6;
     border-top:1px solid var(--line); padding-top:14px; max-width:900px}
@@ -224,15 +263,41 @@
 
   <div class="rows-head">
     <span>Status</span><span>Code</span><span>Files / items</span><span>Size</span>
-    <span>Type</span><span>Created</span><span>Expires</span><span>Downloads</span><span>Burn</span>
+    <span>Type</span><span>Created</span><span>Expires</span><span>Downloads</span><span>Burn</span><span>Picked</span>
   </div>
   <div class="rows" id="rows"></div>
 
+  <div class="sect-head" style="margin-top:38px">
+    <h2>Share history</h2>
+    <span class="count" id="hCountLabel">—</span>
+  </div>
+  <div class="toolbar">
+    <input id="hq" type="search" placeholder="Search code, filename or IP…" autocomplete="off">
+    <select id="hStatus">
+      <option value="all">Status: all</option>
+      <option value="expired">Expired</option>
+      <option value="burned">Burned</option>
+    </select>
+    <select id="hType">
+      <option value="all">Type: all</option>
+      <option value="file">File</option>
+      <option value="text">Text</option>
+    </select>
+  </div>
+  <div class="hhead">
+    <span>Status</span><span>Code</span><span>Files / items</span><span>Size</span>
+    <span>Type</span><span>Created</span><span>Ended</span><span>DL</span><span>Burn</span><span>Creator</span>
+  </div>
+  <div class="rows" id="hrows"></div>
+
   <footer>
-    <strong>Privacy:</strong> this page shows aggregate stats and per-share metadata (codes, filenames, sizes,
-    download counts) after authenticating with the operator key. AnyDevice <em>does not collect</em> sender or
-    receiver identities, IP addresses, device info, or user accounts — no such fields exist or are shown. The
-    dashboard code is a public static shell; every data request requires the <code>X-Admin-Key</code> header.
+    <strong>Privacy:</strong> this page shows aggregate stats, per-share metadata, and a persistent
+    Share History (codes, filenames, sizes, download counts, creator IP, receiver pickup IP + time,
+    and per-download receiver audit) — all behind the operator key. AnyDevice stores no user accounts
+    or device info; IPs are captured once per share (creator at creation, receiver at first pickup,
+    and at each download) for operator monitoring only. Share History retains metadata only — files
+    and contents are deleted on expiry or burn, so a historical entry can never be downloaded again.
+    The dashboard is a public static shell, but every data request requires the <code>X-Admin-Key</code> header.
   </footer>
 </div>
 
@@ -241,7 +306,7 @@
   "use strict";
   var key = sessionStorage.getItem("adk") || "";
 
-  var state = { stats: null, shares: [], q: "", fStatus: "all", fType: "all", sort: "newest" };
+  var state = { stats: null, shares: [], history: [], q: "", fStatus: "all", fType: "all", sort: "newest", hq: "", hStatus: "all", hType: "all" };
 
   var $ = function (id) { return document.getElementById(id); };
   var esc = function (s) {
@@ -291,9 +356,10 @@
   function loadAll() {
     if (!key) { showGate(); return; }
     $("refreshBtn").disabled = true;
-    Promise.all([apiFetch("/api/admin/stats"), apiFetch("/api/admin/shares")]).then(function (res) {
+    Promise.all([apiFetch("/api/admin/stats"), apiFetch("/api/admin/shares"), apiFetch("/api/admin/history")]).then(function (res) {
       state.stats = res[0];
       state.shares = res[1].shares || [];
+      state.history = res[2].history || [];
       render();
     }).catch(function (e) {
       if (e.message !== "auth") $("gateErr").textContent = e.message || "Request failed.";
@@ -338,6 +404,7 @@
       drawChart();
     }
     renderRows();
+    renderHistory();
   }
 
   function visibleShares() {
@@ -362,6 +429,15 @@
     });
   }
 
+  function receiverLogHtml(log) {
+    if (!log || !log.length) return '<div class="muted">No downloads recorded.</div>';
+    return log.map(function (e) {
+      return '<div class="dline"><span>' + esc(e.item) + "</span>" +
+        '<span class="muted">' + esc(e.ip || "—") + "</span>" +
+        '<span class="muted">' + fmtDate(e.at) + "</span></div>";
+    }).join("");
+  }
+
   function renderRows() {
     var list = visibleShares();
     $("countLabel").textContent = list.length + " shown · " + state.shares.length + " total";
@@ -379,7 +455,10 @@
       var filesCell = '<span class="files">' + esc(names[0] || "—") +
         (names.length > 1 ? '<span class="files"><small>+ ' + (names.length - 1) + ' more</small></span>' : "") +
         "</span>";
-      return '<div class="row">' +
+      var pickedCell = (sh.picked_ip && sh.picked_at)
+        ? '<span class="ip">' + esc(sh.picked_ip) + "</span><br><span style=\"color:var(--dim);font-size:11px\">" + fmtDate(sh.picked_at) + "</span>"
+        : "—";
+      return '<details class="drow"><summary class="row">' +
         '<div class="cell status ' + (sh.active ? "on" : "off") + '" data-label="Status">' + (sh.active ? "Active" : "Expired") + "</div>" +
         '<div class="cell code-cell" data-label="Code"><span class="code">' + esc(sh.code) + "</span></div>" +
         '<div class="cell" data-label="Files">' + filesCell + (typeCount ? '<small>' + typeCount + ' file(s)</small>' : "") + "</div>" +
@@ -391,7 +470,71 @@
           : '<span style="color:var(--rose)">' + fmtDate(sh.expires_at) + "</span>") + "</div>" +
         '<div class="cell dl" data-label="Downloads">' + sh.downloads + "</div>" +
         '<div class="cell" data-label="Burn">' + (sh.burn ? '<span class="burn">burn</span>' : "—") + "</div>" +
-        "</div>";
+        '<div class="cell" data-label="Picked">' + pickedCell + "</div>" +
+        "</summary>" +
+        '<div class="dlog"><div class="dhead">Receiver activity</div>' + receiverLogHtml(sh.download_log) + "</div>" +
+        "</details>";
+    }).join("");
+  }
+
+  function visibleHistory() {
+    var q = state.hq.toLowerCase();
+    return state.history.filter(function (h) {
+      if (state.hStatus !== "all" && h.status !== state.hStatus) return false;
+      if (state.hType !== "all") {
+        var t = shareType(h);
+        if (!(state.hType === "mixed" ? t === "mixed" : t === state.hType)) return false;
+      }
+      if (q) {
+        var hay = h.code + " " + (h.creator_ip || "") + " " + (h.picked_ip || "") + " " +
+          (h.items || []).map(function (i) { return i.name; }).join(" ") + " " +
+          (h.download_log || []).map(function (e) { return (e.ip || "") + " " + e.item; }).join(" ");
+        if (hay.toLowerCase().indexOf(q) === -1) return false;
+      }
+      return true;
+    }).sort(function (a, b) {
+      return b.ended_at - a.ended_at; /* newest-ended first */
+    });
+  }
+
+  function renderHistory() {
+    var list = visibleHistory();
+    $("hCountLabel").textContent = list.length + " shown · " + state.history.length + " total";
+    var el = $("hrows");
+    if (!list.length) {
+      el.innerHTML = '<div class="empty">No history entries match.</div>';
+      return;
+    }
+    el.innerHTML = list.map(function (h) {
+      var t = shareType(h);
+      var tCls = t === "file" ? "type-file" : (t === "text" ? "type-text" : "type-mixed");
+      var tLabel = t === "mixed" ? "mixed" : t;
+      var names = (h.items || []).map(function (i) { return i.name; });
+      var typeCount = (h.items || []).filter(function (i) { return i.type === "file"; }).length;
+      var stCls = h.status === "burned" ? "st-burn" : "st-exp";
+      var filesCell = '<span class="files">' + esc(names[0] || "—") +
+        (names.length > 1 ? '<span class="files"><small>+ ' + (names.length - 1) + ' more</small></span>' : "") +
+        "</span>";
+      var pickupHtml = "";
+      if (h.picked_ip && h.picked_at) {
+        pickupHtml = '<div class="dline"><span>Picked up</span>' +
+          '<span>' + esc(h.picked_ip) + "</span>" +
+          '<span>' + fmtDate(h.picked_at) + "</span></div>";
+      }
+      return '<details class="drow"><summary class="hrow">' +
+        '<div class="cell ' + stCls + '" data-label="Status">' + (h.status === "burned" ? "Burned" : "Expired") + "</div>" +
+        '<div class="cell code-cell" data-label="Code"><span class="code">' + esc(h.code) + "</span></div>" +
+        '<div class="cell" data-label="Files">' + filesCell + (typeCount ? '<small>' + typeCount + ' file(s)</small>' : "") + "</div>" +
+        '<div class="cell" data-label="Size">' + fmtBytes(h.bytes_total) + "</div>" +
+        '<div class="cell" data-label="Type"><span class="type-badge ' + tCls + '">' + tLabel + "</span></div>" +
+        '<div class="cell" data-label="Created">' + fmtDate(h.created_at) + "</div>" +
+        '<div class="cell" data-label="Ended">' + fmtDate(h.ended_at) + "</div>" +
+        '<div class="cell dl" data-label="Downloads">' + h.downloads + "</div>" +
+        '<div class="cell" data-label="Burn">' + (h.burn ? '<span class="burn">burn</span>' : "—") + "</div>" +
+        '<div class="cell ip" data-label="Creator">' + esc(h.creator_ip || "—") + "</div>" +
+        "</summary>" +
+        '<div class="dlog"><div class="dhead">Receiver activity</div>' + pickupHtml + receiverLogHtml(h.download_log) + "</div>" +
+        "</details>";
     }).join("");
   }
 
@@ -427,6 +570,9 @@
   $("fStatus").addEventListener("change", function () { state.fStatus = this.value; renderRows(); });
   $("fType").addEventListener("change", function () { state.fType = this.value; renderRows(); });
   $("sort").addEventListener("change", function () { state.sort = this.value; renderRows(); });
+  $("hq").addEventListener("input", function () { state.hq = this.value; renderHistory(); });
+  $("hStatus").addEventListener("change", function () { state.hStatus = this.value; renderHistory(); });
+  $("hType").addEventListener("change", function () { state.hType = this.value; renderHistory(); });
 
   setInterval(function () { if (key) loadAll(); }, 60000);
 
