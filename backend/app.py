@@ -10,6 +10,7 @@ Endpoints (per PRD section 9):
   GET  /api/share/<code>/download-all   zip + stream everything
   GET  /api/admin/stats                 operator-only aggregate stats (X-Admin-Key)
   GET  /api/admin/shares                operator-only share detail feed (X-Admin-Key)
+  GET  /api/admin/history               operator-only persistent share history (X-Admin-Key)
   GET  /admin                           static admin dashboard shell (public; data is key-gated)
 
 Run:  python -m backend.app            (or: flask --app backend.app run)
@@ -525,6 +526,29 @@ def create_app(cfg: Config | None = None) -> Flask:
             }
         )
 
+    @app.get("/api/admin/history")
+    @require_admin
+    def admin_history():
+        """Operator-only persistent Share History (metadata only).
+
+        Every share that expired or self-destructed via burn lives here forever —
+        code, item names/sizes, created/ended timestamps, final download count,
+        burn flag, and the creator's IP captured at creation. Physical content is
+        deleted at purge and never retained: no blobs, no text, no encryption
+        keys. The data therefore can never make a deleted share downloadable.
+        """
+        now = time.time()
+        entries = cfg.meta_store.history()
+        return jsonify(
+            {
+                "ok": True,
+                "backend": cfg.backend,
+                "generated_at": now,
+                "count": len(entries),
+                "history": entries,
+            }
+        )
+
     @app.get("/admin")
     def admin_page():
         """Static shell for the admin dashboard (no data).
@@ -563,7 +587,10 @@ def create_app(cfg: Config | None = None) -> Flask:
         staged_keys: list[str] = []
         try:
             items = _stage_file_items(cfg, code, specs, key)
-            share = cfg.meta_store.create_share(code, ttl_key, ttl_seconds, burn, items, enc=False, key=key)
+            share = cfg.meta_store.create_share(
+                code, ttl_key, ttl_seconds, burn, items, enc=False, key=key,
+                creator_ip=_client_ip(cfg),
+            )
         except BlobTooLargeError:
             raise ApiError(413, f"File too large — cap is {cfg.file_max_bytes // (1024*1024)}MB per file.")
         except ValueError as e:
@@ -581,10 +608,11 @@ def create_app(cfg: Config | None = None) -> Flask:
         rate_limit("lookup", cfg.lookup_limit)
         share = fetch_live_share(code_raw)
         # ?mark_viewed=1 — the receiver opening the share. Flips pending → viewed
-        # so the sender's page can show "picked up". Sender-side status polls use
-        # the /status endpoint instead and never flip it.
+        # so the sender's page can show "picked up", and records the receiver's
+        # IP once (admin-only audit). Sender-side status polls use the /status
+        # endpoint instead and never flip it.
         if request.args.get("mark_viewed") == "1" and share.get("status") != "viewed":
-            cfg.meta_store.set_viewed(share["code"])
+            cfg.meta_store.set_viewed(share["code"], ip=_client_ip(cfg))
             share["status"] = "viewed"
         return jsonify(_share_json(share))
 
@@ -662,8 +690,17 @@ def create_app(cfg: Config | None = None) -> Flask:
         return cfg.meta_store.all_items_downloaded(share["code"])
 
     def _purge_share(share: dict) -> None:
-        cfg.blob_store.delete_prefix(f"shares/{share['code']}")
-        cfg.meta_store.delete(share["code"])
+        """Delete a share's data AND snapshot it to admin history.
+
+        Called from download streams' ``finally`` and the expiry path, so it must
+        never raise. ``finalize`` writes the history entry (idempotently) and
+        drops the metadata; blobs go next. Physical content is not retained.
+        """
+        try:
+            cfg.meta_store.finalize(share["code"], "burned")
+            cfg.blob_store.delete_prefix(f"shares/{share['code']}")
+        except Exception:  # noqa: BLE001
+            log.exception("purge failed for %s — will retry on next cleanup", share["code"])
 
     # -- download one -------------------------------------------------------
 
@@ -681,6 +718,9 @@ def create_app(cfg: Config | None = None) -> Flask:
 
         if not inline:
             cfg.meta_store.mark_item_downloaded(share["code"], item_id)
+            cfg.meta_store.log_download(
+                share["code"], item_id, name, ip=_client_ip(cfg)
+            )
             burn_now = _burn_now(share)
         else:
             burn_now = False
@@ -727,6 +767,10 @@ def create_app(cfg: Config | None = None) -> Flask:
             raise ApiError(404, "This share has no items left.")
 
         cfg.meta_store.mark_all_downloaded(share["code"])
+        for it in items:
+            cfg.meta_store.log_download(
+                share["code"], it["id"], it["name"] or "file", ip=_client_ip(cfg)
+            )
         burn_now = _burn_now(share)
 
         tmp = tempfile.NamedTemporaryFile(prefix="anydevice-", suffix=".zip", delete=False)

@@ -17,17 +17,29 @@ log = logging.getLogger("anydevice.cleanup")
 
 
 def purge_once(store, blob_store) -> int:
-    """Delete every expired share. Returns number of shares purged."""
+    """Delete every expired share. Returns number of shares purged.
+
+    Each expired share is snapshotted to ``share_history`` (metadata only) via
+    ``store.finalize(..., 'expired')`` before its blobs are dropped, so admin
+    history survives even if the process restarts mid-pass. ``finalize`` is
+    idempotent (code primary key), so a retried purge can't duplicate entries.
+    """
     expired = store.expired_codes()
     purged = 0
     for code in expired:
         try:
+            finalized = store.finalize(code, "expired")
+        except Exception:  # noqa: BLE001 - never kill the cleanup loop
+            log.exception("history finalize failed for %s", code)
+            continue
+        if not finalized:
+            continue
+        try:
             blob_store.delete_prefix(f"shares/{code}")
         except OSError:
             log.warning("blob cleanup failed for %s", code)
-        store.delete(code)
         purged += 1
-        log.info("purged expired share %s", code)
+        log.info("purged expired share %s → history", code)
     return purged
 
 
