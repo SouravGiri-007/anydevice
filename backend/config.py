@@ -2,6 +2,10 @@
 
 Every value can be overridden with ANYDEVICE_* environment variables, which
 keeps the same code runnable in dev and (later) on Render.
+
+This module provides a Config dataclass that loads settings from environment
+variables with sensible defaults. All settings are validated on load to catch
+configuration errors early.
 """
 from __future__ import annotations
 
@@ -13,13 +17,39 @@ from dotenv import load_dotenv
 
 
 def _env_int(name: str, default: int) -> int:
+    """Read an integer from an environment variable with a default fallback.
+
+    Args:
+        name: Environment variable name
+        default: Default value if not set or empty
+
+    Returns:
+        Integer value from environment or default
+
+    Raises:
+        ValueError: If the environment variable is set but not a valid integer
+    """
     raw = os.environ.get(name)
     if raw is None or raw == "":
         return default
-    return int(raw)
+    try:
+        return int(raw)
+    except ValueError:
+        raise ValueError(f"Environment variable {name} must be an integer, got: {raw!r}")
 
 
 def _env_bool(name: str, default: bool) -> bool:
+    """Read a boolean from an environment variable with a default fallback.
+
+    Accepts: "1", "true", "yes", "on" (case-insensitive) as True.
+
+    Args:
+        name: Environment variable name
+        default: Default value if not set or empty
+
+    Returns:
+        Boolean value from environment or default
+    """
     raw = os.environ.get(name)
     if raw is None or raw == "":
         return default
@@ -28,77 +58,139 @@ def _env_bool(name: str, default: bool) -> bool:
 
 # Characters we generate codes from. 0/O and 1/I are excluded (ambiguous when
 # a human types a code they saw on another screen).
-CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-CODE_LENGTH = 5
-CODE_LENGTH_LONG = 6
+CODE_ALPHABET: str = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+CODE_LENGTH: int = 5
+CODE_LENGTH_LONG: int = 6
 
 # TTL options surfaced to the UI. Key is the wire value, value is seconds.
-DEFAULT_TTL_KEY = "1h"
-TTL_OPTIONS = {
+DEFAULT_TTL_KEY: str = "1h"
+TTL_OPTIONS: dict[str, int] = {
     "5m": 5 * 60,
     "1h": 60 * 60,
     "24h": 24 * 60 * 60,
 }
 
 # File type allow-list. Anything else is rejected with a clear message.
-ALLOWED_MIME_PREFIXES = ("image/", "text/", "application/")
-ALLOWED_EXTENSIONS = {
+ALLOWED_MIME_PREFIXES: tuple[str, ...] = ("image/", "text/", "application/")
+ALLOWED_EXTENSIONS: set[str] = {
     "pdf", "docx", "doc", "xlsx", "xls", "pptx", "txt", "md", "py", "js", "ts",
     "tsx", "html", "css", "json", "csv", "zip",
 }
 # application/octet-stream is allowed so genuinely unknown files still work.
-ALLOWED_MIME_EXACT = {"application/octet-stream"}
+ALLOWED_MIME_EXACT: set[str] = {"application/octet-stream"}
 
 
 @dataclass
 class Config:
+    """Application configuration loaded from environment variables.
+
+    All configuration values are validated on instantiation. Size limits are in bytes,
+    rate limits are per IP per time window. When backend is "supabase", Supabase
+    credentials must be provided.
+
+    Attributes:
+        data_dir: Local directory for SQLite database and blob storage (disk backend only).
+        file_max_bytes: Maximum size per file in bytes (default: 50 MB).
+        total_max_bytes: Maximum total size per share in bytes (default: 100 MB).
+        items_max: Maximum number of items per share (default: 50).
+        lookup_limit: Lookups allowed per IP per window (default: 5).
+        download_limit: Downloads allowed per IP per window (default: 60).
+        create_limit: Share creations allowed per IP per window (default: 15).
+        poll_limit: Status/clipboard polls allowed per IP per window (default: 120).
+        limit_window_seconds: Time window for rate limiting in seconds (default: 60).
+        cleanup_interval_seconds: How often to purge expired shares in seconds (default: 60).
+        start_cleanup: Whether to start the background cleanup thread (default: False).
+        product_name: Human-readable product name for docs (default: "AnyDevice").
+        max_filename_length: Max length for stored filenames (default: 150).
+        max_text_bytes: Maximum size for text items in bytes (default: 500 KB).
+        cors_origins: Tuple of allowed CORS origins (default: ("*",)).
+        trust_proxy: Whether to trust X-Forwarded-For header for client IP (default: False).
+        admin_key: Shared secret for admin endpoints; disabled when empty (default: "").
+        backend: Storage backend - "disk" or "supabase" (default: "disk").
+        supabase_url: Supabase project URL (only used when backend == "supabase").
+        supabase_service_key: Supabase service role key (only used when backend == "supabase").
+        supabase_bucket: Supabase storage bucket name (default: "shares").
+        supabase_database_url: Supabase database connection string with pooler.
+        blob_store: Injected storage backend instance (set at app creation).
+        meta_store: Injected metadata store instance (set at app creation).
+    """
+
     data_dir: Path
-    # File / total size caps in bytes.
     file_max_bytes: int = 50 * 1024 * 1024
     total_max_bytes: int = 100 * 1024 * 1024
     items_max: int = 50
-    # Rate limits (per IP per window).
     lookup_limit: int = 5
     download_limit: int = 60
     create_limit: int = 15
-    poll_limit: int = 120  # sender-side pickup polls must never trip the lookup cap
+    poll_limit: int = 120
     limit_window_seconds: int = 60
-    # Cleanup.
     cleanup_interval_seconds: int = 60
     start_cleanup: bool = False
-    # Human-facing product name.
     product_name: str = "AnyDevice"
     max_filename_length: int = 150
     max_text_bytes: int = 500_000
     cors_origins: tuple[str, ...] = ("*",)
-    # Set true when deployed behind a trusted reverse proxy (Render/Vercel)
-    # so rate limiting keys on the real client IP.
     trust_proxy: bool = False
-
-    # Operator-only admin endpoint secret. When empty the /api/admin/stats
-    # route is disabled (no key configured → nothing to brute-force).
     admin_key: str = ""
-
-    # Backend storage engine: "disk" (SQLite + local blobs) or "supabase"
-    # (Postgres + Supabase Storage).
     backend: str = "disk"
-    # Supabase credentials (only read when backend == "supabase").
     supabase_url: str = ""
     supabase_service_key: str = ""
     supabase_bucket: str = "shares"
     supabase_database_url: str = ""
-
-    # Injected at create_app time (kept on cfg for route access).
-    blob_store: object = None
-    meta_store: object = None
+    blob_store: object | None = None
+    meta_store: object | None = None
 
     def __post_init__(self) -> None:
+        """Validate and normalize configuration after instantiation."""
         self.data_dir = Path(self.data_dir)
+        self._validate()
+
+    def _validate(self) -> None:
+        """Validate configuration values.
+
+        Raises:
+            ValueError: If configuration is invalid
+        """
+        if self.backend not in ("disk", "supabase"):
+            raise ValueError(f"backend must be 'disk' or 'supabase', got: {self.backend!r}")
+
+        if self.file_max_bytes <= 0:
+            raise ValueError(f"file_max_bytes must be positive, got: {self.file_max_bytes}")
+
+        if self.total_max_bytes <= 0:
+            raise ValueError(f"total_max_bytes must be positive, got: {self.total_max_bytes}")
+
+        if self.items_max <= 0:
+            raise ValueError(f"items_max must be positive, got: {self.items_max}")
+
+        if self.limit_window_seconds <= 0:
+            raise ValueError(f"limit_window_seconds must be positive, got: {self.limit_window_seconds}")
+
+        if self.cleanup_interval_seconds <= 0:
+            raise ValueError(f"cleanup_interval_seconds must be positive, got: {self.cleanup_interval_seconds}")
+
+        if self.backend == "supabase":
+            if not self.supabase_url:
+                raise ValueError("SUPABASE_URL required when backend is 'supabase'")
+            if not self.supabase_service_key:
+                raise ValueError("SUPABASE_SERVICE_ROLE_KEY required when backend is 'supabase'")
+            if not self.supabase_database_url:
+                raise ValueError("SUPABASE_DATABASE_URL required when backend is 'supabase'")
 
     @classmethod
-    def from_env(cls) -> "Config":
-        # Local dev convenience: read optional project .env (a no-op when the
-        # file is absent, so deployed hosts that set real env vars are unaffected).
+    def from_env(cls) -> Config:
+        """Create configuration by reading environment variables.
+
+        Loads optional .env file first (dev convenience), then reads
+        ANYDEVICE_* and Supabase environment variables. All values are
+        validated on instantiation.
+
+        Returns:
+            Config instance with values from environment
+
+        Raises:
+            ValueError: If environment variables are invalid or required values are missing
+        """
         load_dotenv()
         return cls(
             data_dir=Path(os.environ.get("ANYDEVICE_DATA_DIR", "./data")).resolve(),
