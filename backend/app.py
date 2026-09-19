@@ -224,7 +224,22 @@ def _share_json(share: dict) -> dict:
 
 
 class ApiError(Exception):
-    def __init__(self, status: int, message: str, code: str | None = None):
+    """Application error with HTTP status and error code.
+
+    Attributes:
+        status: HTTP status code
+        message: Human-readable error message
+        code: Machine-readable error code for client handling
+    """
+
+    def __init__(self, status: int, message: str, code: str | None = None) -> None:
+        """Initialize ApiError.
+
+        Args:
+            status: HTTP status code (400, 404, 429, etc.)
+            message: Error message to return to client
+            code: Machine-readable error code (default: "error")
+        """
         super().__init__(message)
         self.status = status
         self.message = message
@@ -232,6 +247,16 @@ class ApiError(Exception):
 
 
 def _err(status: int, message: str, **extra) -> tuple[Response, int]:
+    """Format a standardized error response.
+
+    Args:
+        status: HTTP status code
+        message: Error message
+        **extra: Additional fields to include in response
+
+    Returns:
+        Tuple of (JSON response, status code)
+    """
     payload = {"error": message, **extra}
     return jsonify(payload), status
 
@@ -425,39 +450,77 @@ def create_app(cfg: Config | None = None) -> Flask:
 
     @app.errorhandler(ApiError)
     def handle_api_error(e: ApiError):
+        """Handle ApiError exceptions with consistent response format."""
+        log.debug(f"API error {e.status}: {e.code} - {e.message}")
         return _err(e.status, e.message, code=e.code)
 
     @app.errorhandler(413)
-    def too_large(_e):
+    def too_large(_e: Exception):
+        """Handle request entity too large errors."""
         limit_mb = cfg.file_max_bytes // (1024 * 1024)
-        return _err(413, f"Upload too large — per-file cap is {limit_mb}MB")
+        msg = f"Upload too large — per-file cap is {limit_mb}MB"
+        log.debug(f"Upload rejected: {msg}")
+        return _err(413, msg, code="too_large")
 
     @app.errorhandler(404)
-    def not_found(_e):
-        return _err(404, "Nothing here.")
+    def not_found(_e: Exception):
+        """Handle not found errors."""
+        log.debug("Route not found")
+        return _err(404, "Nothing here.", code="not_found")
 
     @app.errorhandler(405)
-    def method_not_allowed(_e):
-        return _err(405, "Method not allowed.")
+    def method_not_allowed(_e: Exception):
+        """Handle method not allowed errors."""
+        log.debug(f"Method not allowed: {request.method} {request.path}")
+        return _err(405, "Method not allowed.", code="method_not_allowed")
 
     @app.errorhandler(500)
-    def internal(_e):
-        return _err(500, "Something broke on our side. The share probably still exists — try again.")
+    def internal(e: Exception):
+        """Handle internal server errors."""
+        log.error(f"Internal server error: {e}", exc_info=True)
+        return _err(500, "Something broke on our side. The share probably still exists — try again.",
+                   code="server_error")
 
     def rate_limit(bucket: str, limit: int) -> None:
+        """Check rate limit for the current request.
+
+        Args:
+            bucket: Rate limit bucket name (e.g., "create", "lookup", "download")
+            limit: Maximum allowed requests in the time window
+
+        Raises:
+            ApiError: If rate limit exceeded (429)
+        """
         allowed, retry = limiter.allow(f"{bucket}:{_client_ip(cfg)}", limit, cfg.limit_window_seconds)
         if not allowed:
-            raise ApiError(429, f"Too many tries — wait {max(1, int(retry) + 1)}s.", code="rate_limited")
+            retry_seconds = max(1, int(retry) + 1)
+            log.warning(f"Rate limit exceeded for {bucket} from {_client_ip(cfg)}, retry in {retry_seconds}s")
+            raise ApiError(429, f"Too many tries — wait {retry_seconds}s.", code="rate_limited")
 
     def fetch_live_share(code_raw: str) -> dict:
-        """Normalise + load a share; purge it first if it has expired."""
+        """Fetch and validate a live share.
+
+        Normalises the code, checks existence and expiry, and purges if expired.
+
+        Args:
+            code_raw: Raw share code from the user
+
+        Returns:
+            Share metadata dictionary
+
+        Raises:
+            ApiError: If code is invalid, share not found, or share expired (400/404)
+        """
         code = normalise_code(code_raw)
         if code is None:
-            raise ApiError(400, "That doesn't look like a code. Use 5–6 letters/numbers.")
+            log.debug(f"Invalid code format: {code_raw!r}")
+            raise ApiError(400, "That doesn't look like a code. Use 5–6 letters/numbers.", code="invalid_code")
         share = cfg.meta_store.get(code)
         if share is None:
+            log.debug(f"Share not found: {code}")
             raise ApiError(404, "No share with that code — it may have self-destructed already.", code="not_found")
         if time.time() >= share["expires_at"]:
+            log.info(f"Share expired, purging: {code}")
             purge_once(cfg.meta_store, cfg.blob_store)
             raise ApiError(404, "That share has expired.", code="expired")
         return share
@@ -470,17 +533,27 @@ def create_app(cfg: Config | None = None) -> Flask:
         No user accounts: this is a single service-level key for the operator.
         Requests are throttled on the same in-memory limiter used everywhere
         else so a brute-forcer can't sit and guess the header forever. When no
-        key is configured the route is disabled entirely (503)."""
+        key is configured the route is disabled entirely (503).
+
+        Args:
+            f: Flask route function to wrap
+
+        Returns:
+            Wrapped function that validates admin key
+        """
 
         @wraps(f)
         def wrapper(*args, **kwargs):
             rate_limit("admin", 10)
             expected = cfg.admin_key
             if not expected:
-                raise ApiError(503, "Operator stats are disabled — set ANYDEVICE_ADMIN_KEY.")
+                log.warning("Admin route accessed but ANYDEVICE_ADMIN_KEY not configured")
+                raise ApiError(503, "Operator stats are disabled — set ANYDEVICE_ADMIN_KEY.", code="disabled")
             given = request.headers.get("X-Admin-Key", "")
             if not given or not compare_digest(given, expected):
+                log.warning(f"Admin auth failed from {_client_ip(cfg)}")
                 raise ApiError(401, "Missing or invalid admin key.", code="forbidden")
+            log.info(f"Admin access granted to {request.path} from {_client_ip(cfg)}")
             return f(*args, **kwargs)
 
         return wrapper
@@ -571,16 +644,23 @@ def create_app(cfg: Config | None = None) -> Flask:
 
     @app.post("/api/share")
     def create_share():
+        """Create a new share with items.
+
+        Returns:
+            JSON response with share details including code and sender_token (201)
+        """
         rate_limit("create", cfg.create_limit)
         try:
             ttl_key, burn, enc, specs = _parse_payload(cfg)
             ttl_key, ttl_seconds = _validate_ttl(ttl_key)
         except ValueError as e:
-            raise ApiError(400, str(e))
+            log.debug(f"Invalid payload: {e}")
+            raise ApiError(400, str(e), code="invalid_payload")
         # Individual text cap (they don't go through blob storage).
         for s in specs:
             if s["type"] == "text" and s["size"] > cfg.max_text_bytes:
-                raise ApiError(413, "Text pastes are capped at 500KB.")
+                log.debug(f"Text item exceeds limit: {s['size']} > {cfg.max_text_bytes}")
+                raise ApiError(413, "Text pastes are capped at 500KB.", code="text_too_large")
 
         code = generate_unique_code(cfg.meta_store.code_exists)
         key = new_key()
@@ -592,8 +672,10 @@ def create_app(cfg: Config | None = None) -> Flask:
                 code, ttl_key, ttl_seconds, burn, items, enc=False, key=key,
                 creator_ip=_client_ip(cfg), sender_token=sender_token,
             )
+            log.info(f"Share created: {code} with {len(items)} items, TTL={ttl_key}, burn={burn}")
         except BlobTooLargeError:
-            raise ApiError(413, f"File too large — cap is {cfg.file_max_bytes // (1024*1024)}MB per file.")
+            log.warning(f"File too large for share {code}")
+            raise ApiError(413, f"File too large — cap is {cfg.file_max_bytes // (1024*1024)}MB per file.", code="file_too_large")
         except ValueError as e:
             raise ApiError(400, str(e))
         except Exception:
